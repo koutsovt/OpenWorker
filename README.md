@@ -14,7 +14,7 @@ Milestone 1 (skeleton) is in place:
 |---|---|---|
 | Harness interface | `src/harness/port.ts` | Done |
 | Fake adapter (scripted, no model calls) | `src/harness/fake.ts` | Done |
-| OpenWorker adapter | `src/harness/openworker.ts` | Done; tested against a local mock provider, not yet against real providers |
+| OpenWorker adapter | `src/harness/openworker.ts` | Done; verified against DeepSeek with real calls; OpenAI not yet run |
 | Claude Code adapter (subscription, local only) | `src/harness/claude-code.ts` | Written; logic tested with a scripted engine. **Not yet run against real Claude Code** — see below |
 | Engine router | `src/harness/routing.ts` | Done |
 | Audit ledger (hash-chained) | `src/audit/ledger.ts` | Done |
@@ -52,6 +52,16 @@ node --disable-warning=ExperimentalWarning scripts/claude-code-check.ts
 
 It makes a few small real model calls and checks that only platform tools are offered (no shell, file or
 web tools), that policy denials and approvals hold, and that sessions resume.
+
+## Check an API-key provider
+
+```bash
+CHECK_PROVIDER=DeepSeek CHECK_MODEL=<model id> node --env-file=/path/to/private.env --disable-warning=ExperimentalWarning scripts/provider-check.ts
+```
+
+DeepSeek passed this check on 15 Nov 2026 (see [spikes/m0/RESULTS.md](spikes/m0/RESULTS.md)). OpenAI has not been run.
+The OpenWorker engine ignores HTTP proxy settings; on a network that requires a proxy, run
+`scripts/proxy-relay.ts` and set `CHECK_BASE_URL` to it.
 
 ## Ask a model
 

@@ -33,12 +33,21 @@ These checks prove harness mechanics. They do not prove how real models behave.
 4. **Invalid structured output fails the turn** when the model repeats it. The executor needs its own
    corrective re-prompt or task retry.
 
+## DeepSeek, real calls (15 Nov 2026)
+
+Run with `scripts/provider-check.ts` through the OpenWorker adapter, model `deepseek-flash`, 9 of 9 passed:
+plain turn, usage reporting, session history, multi-step tool use, schema-valid structured result built from
+tool output, policy denial, and the approval gate (pause, deny, approve once).
+
+Finding: **the engine's model client ignores HTTP proxy settings** (`reqwest` built with `.no_proxy()` in
+`runtime/src/model.rs`). Behind a mandatory outbound proxy it fails with a `transport` error. The run above
+went through `scripts/proxy-relay.ts`, a loopback relay. A direct run on an unproxied network is still to do.
+
 ## Not yet verified
 
 | Item | Blocked by |
 |---|---|
 | OpenAI tool calling, structured output quality, usage | OpenAI API key |
-| DeepSeek through Chat Completions | DeepSeek API key |
 | Claude Code adapter checks (custom tools only, blocking hook, usage, resume) | Must run on the Mac with the subscription |
 | Hard kill mid-turn, then resume without repeating tool calls | Not yet written (no key needed) |
 | macOS run of this spike | Run locally |

@@ -86,6 +86,8 @@ Evidence labels used below:
 | L14 | **Beta instability.** API still changing; `main` is ahead of npm; Alpine/musl unsupported | [doc] | Pin exact version; keep everything behind an adapter |
 | L15 | **Deployment references are experimental.** A private-Kubernetes guide and Helm chart exist, but "local qualification does not cover every remote environment" | [doc] `private-kubernetes.md`, `deploy/helm` | Start with the embedded SDK in a container; qualify the shared service ourselves before relying on it |
 
+| L16 | **The engine's model client ignores HTTP proxies** (`.no_proxy()`), found during the DeepSeek check | [src] `runtime/src/model.rs:368` | On networks with a mandatory outbound proxy, providers are unreachable without a relay or gateway in front. Matters for enterprise networks |
+
 None of these is a hard blocker for the proof of concept. L10 is the only one that could remove a stated requirement (DeepSeek); L8 limits what the PoC may safely do.
 
 ---
