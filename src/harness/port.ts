@@ -5,7 +5,8 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 
 export interface ProviderSpec {
   name: string;
-  api: 'responses' | 'chat-completions' | 'anthropic';
+  /** `claude-code` is served by the Claude Code adapter and takes no key or URL. */
+  api: 'responses' | 'chat-completions' | 'anthropic' | 'claude-code';
   baseUrl?: string;
   /** Name of the environment variable holding the key. The value never enters config. */
   apiKeyEnv?: string;

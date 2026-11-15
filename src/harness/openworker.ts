@@ -46,6 +46,7 @@ export class OpenWorkerHarness implements AgentHarness {
         : [],
     });
     for (const p of setup.providers) {
+      if (p.api === 'claude-code') throw new HarnessError('unknown_provider', `Provider ${p.name} belongs to the Claude Code adapter`);
       await this.harness.setModelProvider({
         name: p.name, api: p.api,
         ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}),

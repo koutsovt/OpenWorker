@@ -110,7 +110,8 @@ describe('task run with fallback', () => {
 describe('configuration', () => {
   it('loads the committed config', () => {
     const loaded = loadConfig(resolve('config'));
-    assert.deepEqual(loaded.policies[0], { id: 'assurance', default: 'openai-assurance', allowed: ['openai-assurance'], fallbacks: ['deepseek-fallback'] });
+    assert.deepEqual(loaded.policies.find((p) => p.id === 'assurance'), { id: 'assurance', default: 'openai-assurance', allowed: ['openai-assurance'], fallbacks: ['deepseek-fallback'] });
+    assert.deepEqual(loaded.policies.find((p) => p.id === 'author'), { id: 'author', default: 'claude-author', allowed: ['claude-author'], fallbacks: ['deepseek-fallback'] });
   });
   it('rejects a key written into config', () => {
     assert.throws(() => validateConfig({ providers: [{ name: 'X', api: 'responses', apiKey: 'sk-live' }], models: [], policies: [] }), ConfigError);
@@ -124,14 +125,17 @@ describe('configuration', () => {
 });
 
 describe('engine boundary', () => {
-  it('only the OpenWorker adapter imports the OpenWorker SDK', () => {
+  it('each engine SDK is imported only by its own adapter', () => {
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) walk(path);
-        else if (path.endsWith('.ts') && readFileSync(path, 'utf8').includes('@openworkerai/') && !path.endsWith(join('harness', 'openworker.ts')))
-          offenders.push(path);
+        else if (path.endsWith('.ts')) {
+          const source = readFileSync(path, 'utf8');
+          if (source.includes('@openworkerai/') && !path.endsWith(join('harness', 'openworker.ts'))) offenders.push(path);
+          if (source.includes('@anthropic-ai/') && !path.endsWith(join('harness', 'claude-code.ts'))) offenders.push(path);
+        }
       }
     };
     walk(resolve('src'));

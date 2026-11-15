@@ -31,7 +31,7 @@ export interface PlatformConfig {
 
 export class ConfigError extends Error {}
 
-const APIS = ['responses', 'chat-completions', 'anthropic'];
+const APIS = ['responses', 'chat-completions', 'anthropic', 'claude-code'];
 
 export function validateConfig(raw: unknown): PlatformConfig {
   const doc = (raw ?? {}) as Record<string, unknown>;

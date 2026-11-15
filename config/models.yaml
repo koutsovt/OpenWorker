@@ -3,6 +3,11 @@
 # Add `price: { input: <USD per 1M>, output: <USD per 1M> }` from the provider's
 # current price list to enable cost figures; without it cost is reported as unknown.
 models:
+  # Set CLAUDE_AUTHOR_MODEL=default to use Claude Code's own default model.
+  - alias: claude-author
+    provider: Claude
+    modelEnv: CLAUDE_AUTHOR_MODEL
+    capabilities: [tools]
   - alias: openai-assurance
     provider: OpenAI
     modelEnv: OPENAI_ASSURANCE_MODEL
@@ -13,6 +18,11 @@ models:
     capabilities: [tools]
 
 policies:
+  # Claude authors; DeepSeek is fallback only.
+  - id: author
+    default: claude-author
+    allowed: [claude-author]
+    fallbacks: [deepseek-fallback]
   # OpenAI runs the Assurance Agent; DeepSeek is fallback only.
   - id: assurance
     default: openai-assurance

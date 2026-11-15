@@ -5,7 +5,9 @@ import { AuditLedger } from '../audit/ledger.ts';
 import { loadConfig } from '../config/load.ts';
 import { ModelGateway } from '../gateway/gateway.ts';
 import { runTask } from '../gateway/run.ts';
+import { ClaudeCodeHarness } from '../harness/claude-code.ts';
 import { OpenWorkerHarness } from '../harness/openworker.ts';
+import { RoutingHarness } from '../harness/routing.ts';
 
 const [command, ...rest] = process.argv.slice(2);
 const stateDir = resolve(process.env.WORKFORCE_STATE_DIR ?? '.state');
@@ -24,7 +26,12 @@ if (command === 'verify-ledger') {
   }
   const config = loadConfig(resolve('config'));
   const gateway = new ModelGateway(config, ledger);
-  const harness = new OpenWorkerHarness({ stateDir: resolve(stateDir, 'harness') });
+  const claudeDir = resolve(stateDir, 'claude-code');
+  mkdirSync(claudeDir, { recursive: true });
+  const harness = new RoutingHarness([
+    { harness: new ClaudeCodeHarness({ cwd: claudeDir }), serves: (p) => p.api === 'claude-code' },
+    { harness: new OpenWorkerHarness({ stateDir: resolve(stateDir, 'harness') }), serves: (p) => p.api !== 'claude-code' },
+  ]);
   // Register only providers whose key is present; a policy that needs a missing one fails with a clear error.
   await harness.start({ providers: config.providers.filter((p) => !p.apiKeyEnv || process.env[p.apiKeyEnv]), tools: [] });
   try {

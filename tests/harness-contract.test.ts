@@ -5,16 +5,18 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { ClaudeCodeHarness } from '../src/harness/claude-code.ts';
 import { FakeHarness } from '../src/harness/fake.ts';
 import { OpenWorkerHarness } from '../src/harness/openworker.ts';
 import { HarnessError, type AgentHarness, type AgentSpec, type Json, type ToolSpec } from '../src/harness/port.ts';
+import { fakeClaudeEngine } from './support/fake-claude-engine.ts';
 import { startMockProvider, type MockProvider } from './support/mock-provider.ts';
 import { scenario } from './support/scenarios.ts';
 
 const object = (properties: Record<string, Json>, required: string[]): Json =>
   ({ type: 'object', properties, required, additionalProperties: false });
 
-function contract(name: string, make: () => Promise<{ harness: AgentHarness; baseUrl?: string; cleanup(): void }>) {
+function contract(name: string, make: () => Promise<{ harness: AgentHarness; baseUrl?: string; api?: 'claude-code'; cleanup(): void }>) {
   describe(`harness contract: ${name}`, () => {
     let harness: AgentHarness;
     let cleanup: () => void;
@@ -37,7 +39,9 @@ function contract(name: string, make: () => Promise<{ harness: AgentHarness; bas
       harness = made.harness;
       cleanup = made.cleanup;
       await harness.start({
-        providers: [{ name: 'Mock', api: 'chat-completions', apiKeyEnv: 'MOCK_KEY', ...(made.baseUrl ? { baseUrl: made.baseUrl } : {}) }],
+        providers: [made.api
+          ? { name: 'Mock', api: made.api }
+          : { name: 'Mock', api: 'chat-completions', apiKeyEnv: 'MOCK_KEY', ...(made.baseUrl ? { baseUrl: made.baseUrl } : {}) }],
         tools,
         policy: ({ tool: t }) => (t === 'app.forbidden' ? { allow: false, code: 'POLICY_DENY', feedback: 'Not permitted.' } : { allow: true }),
       });
@@ -126,6 +130,11 @@ function contract(name: string, make: () => Promise<{ harness: AgentHarness; bas
 }
 
 contract('fake', async () => ({ harness: new FakeHarness(scenario), cleanup: () => {} }));
+
+// Adapter logic only: the engine here is scripted. Real Claude Code behaviour is checked by scripts/claude-code-check.ts.
+contract('claude-code (scripted engine)', async () => ({
+  harness: new ClaudeCodeHarness({ engine: fakeClaudeEngine() }), api: 'claude-code' as const, cleanup: () => {},
+}));
 
 let mock: MockProvider;
 contract('openworker (mock provider)', async () => {

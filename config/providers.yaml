@@ -1,7 +1,10 @@
 # Runtime model providers. Keys are read from the named environment variables;
-# never put a key in this file. Claude is not listed here: it runs locally
-# through the Claude Code adapter on a personal subscription.
+# never put a key in this file.
 providers:
+  # Claude through Claude Code on a personal subscription. Local, individual use only:
+  # it takes no key here and must not be used in a hosted deployment.
+  - name: Claude
+    api: claude-code
   - name: OpenAI
     api: responses
     apiKeyEnv: OPENAI_API_KEY
