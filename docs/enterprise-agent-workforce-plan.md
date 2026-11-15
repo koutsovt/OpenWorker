@@ -1,6 +1,6 @@
 # Enterprise Agent Workforce — Architecture Assessment and Implementation Plan
 
-Status: **for review; nothing has been built, installed or committed.**
+Status: **plan approved 15 Nov 2026; next step is the M0 validation spike.**
 Source inspected: `andrewyng/openworker` at commit `ecb4454` (13 Nov 2026), read-only clone.
 npm registry checked the same day: `@openworkerai/harness-sdk` **0.1.0-beta.4** (client), native runtime **0.1.0-beta.3**.
 
@@ -496,17 +496,17 @@ Items to confirm in M0 for this adapter: custom tools only with built-ins disabl
 
 ---
 
-## Decisions needed before any implementation
+## Decisions (approved 15 Nov 2026)
 
-| # | Decision | Recommendation |
+| # | Decision | Outcome |
 |---|---|---|
-| D1 | Platform language | TypeScript on Node. It is the only registry-published SDK; there is no Python SDK |
-| D2 | Orchestration style | Application-owned task graph with one session per agent instance, not harness sub-agents or teams |
-| D3 | Skills mechanism | Platform-owned Skills Registry, not harness coworker bundles |
-| D4 | Beta risk | Accept, pin 0.1.0-beta.4, and run the M0 spike first |
-| D5 | Repository | A new repository. Name and owner needed |
-| D6 | Model roles | Which provider authors and which assures; whether DeepSeek is a primary or fallback-only provider |
-| D7 | Agent-writable memory | Off for the PoC |
-| D8 | Subscription at runtime | **Decided 15 Nov 2026:** Claude Code adapter, local only, on your subscription. API keys for OpenAI, DeepSeek and anything on Railway (section 15) |
-| D9 | Scope of "locally first, then Railway" | I applied it to both the scenario and this platform's own deployment (section 14) |
-| D10 | Open-weight models | Not added. The harness can reach local models through Ollama or vLLM [doc] if wanted |
+| D1 | Platform language | TypeScript on Node |
+| D2 | Orchestration style | Application-owned task graph, one session per agent instance |
+| D3 | Skills mechanism | Platform-owned Skills Registry |
+| D4 | Beta risk | Accepted; pin `@openworkerai/harness-sdk` 0.1.0-beta.4; M0 validation spike first |
+| D5 | Repository | `koutsovt/OpenWorker` |
+| D6 | Model roles | Claude authors (subscription, local, via Claude Code adapter). OpenAI runs the Assurance Agent. DeepSeek is fallback only |
+| D7 | Agent-writable memory | Off for the proof of concept |
+| D8 | Subscription at runtime | Claude Code adapter, local only. API keys for OpenAI, DeepSeek and anything on Railway (section 15) |
+| D9 | Deployment path | Local first, then Railway, for both the scenario and this platform (section 14) |
+| D10 | Open-weight models | Not added |
