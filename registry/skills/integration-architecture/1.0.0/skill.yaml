@@ -1,0 +1,24 @@
+id: integration-architecture
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Design how a solution exchanges data with other systems, and what happens when an exchange fails.
+scope: Interfaces between a solution and existing systems that are being retained. Not the internal design of either side.
+inputs:
+  - "The current integration as documented"
+  - "The target solution and data model"
+outputs:
+  - "An interface inventory: direction, trigger, data carried, frequency, owner"
+  - "The integration pattern chosen for each interface and why"
+  - "Failure handling: retry, idempotency, reconciliation"
+  - "What the other system must change, if anything"
+qualityCriteria:
+  - "Every existing interface is accounted for: kept, changed or retired"
+  - "Each interface states what happens to a message that fails"
+  - "No change is required of a retained system without saying so"
+evidenceRequirements:
+  - "The description of each existing interface cites evidence records"
+  - "Volumes and frequencies cite evidence or are labelled assumptions"
+dependencies: []
+applicableRoles: [solution-architecture, data]
+suggestedTools: []

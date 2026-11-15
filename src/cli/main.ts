@@ -42,12 +42,13 @@ const newHarness = () => {
 const available = (config: ReturnType<typeof loadConfig>) => config.providers.filter((p) => !p.apiKeyEnv || process.env[p.apiKeyEnv]);
 
 const user = process.env.WORKFORCE_USER ?? 'local';
-const ask = async (question: string): Promise<boolean> => {
+const prompt = async (question: string): Promise<string> => {
   const terminal = createInterface({ input: process.stdin, output: process.stderr });
   const answer = await terminal.question(question);
   terminal.close();
-  return answer.trim().toLowerCase() === 'y';
+  return answer.trim();
 };
+const ask = async (question: string): Promise<boolean> => (await prompt(question)).toLowerCase() === 'y';
 // The person at the terminal decides. Their identity is checked against the approver role.
 const approver: Approver = async (request, instance) => ({
   approver: user,
@@ -55,32 +56,37 @@ const approver: Approver = async (request, instance) => ({
 });
 
 /** Everything a governed run needs, wired once: registries, policy, tools, stores and the engines. */
-const platform = () => {
+const platform = (knowledgeDir = resolve(process.env.WORKFORCE_KNOWLEDGE_DIR ?? 'knowledge')) => {
   const config = loadConfig(configDir);
   const registry = new Registry(resolve('registry'));
   const governance = Governance.load(resolve(configDir, 'users.yaml'), resolve(configDir, 'policies.yaml'));
   const state = openState(resolve(stateDir, 'state.sqlite'));
   const project = new ProjectMemory(state);
+  const evidence = new EvidenceStore(state);
   const results = new ResultInbox();
+  const gateway = new ModelGateway(config, ledger);
   const harness = newHarness();
   const workforce = new Workforce({
-    harness, ledger, gateway: new ModelGateway(config, ledger), registry, governance,
+    harness, ledger, gateway, registry, governance,
     implementations: {
       ...skillTools(ledger, resolve(stateDir, 'proposals')),
-      ...knowledgeTools(new KnowledgeBase(resolve(process.env.WORKFORCE_KNOWLEDGE_DIR ?? 'knowledge')), new EvidenceStore(state), project, ledger),
+      ...knowledgeTools(new KnowledgeBase(knowledgeDir), evidence, project, ledger),
       ...results.tools,
     },
   });
   const store = new RunStore(state);
-  const orchestrator = new Orchestrator({ workforce, registry, governance, ledger, store, project, results });
-  return { harness, workforce, orchestrator, store, start: () => workforce.start(available(config)) };
+  const orchestrator = new Orchestrator(
+    { workforce, registry, governance, ledger, store, project, evidence, results, providerOf: (alias) => gateway.providerOf(alias) },
+    { reportsDir: resolve(stateDir, 'reports') },
+  );
+  return { harness, workforce, orchestrator, store, project, knowledgeDir, start: () => workforce.start(available(config)) };
 };
 
 const report = (summary: RunSummary): void => {
   for (const t of summary.tasks)
     console.log(`${t.status.padEnd(15)} ${t.id} (${t.agent}${t.model ? `, ${t.tried.join(' -> ')}` : ''})${t.failure ? ` — ${t.failure}` : ''}`);
   console.log(`\nRun ${summary.runId}: ${summary.status}.`);
-  for (const t of summary.tasks.filter((x) => x.result !== null)) console.log(`\n## ${t.id}\n${JSON.stringify(t.result, null, 2)}`);
+  if (summary.status !== 'completed') for (const t of summary.tasks.filter((x) => x.result !== null)) console.log(`\n## ${t.id}\n${JSON.stringify(t.result, null, 2)}`);
 };
 
 if (command === 'verify-ledger') {
@@ -145,28 +151,38 @@ if (command === 'verify-ledger') {
     await harness.shutdown();
   }
 } else if (command === 'orchestrate' || command === 'resume') {
-  // orchestrate [--plan file.json] <objective>: plan (or take a written plan), ask for approval, run.
-  // resume <run-id>: continue a run that was interrupted.
-  const planFlag = rest.indexOf('--plan');
-  const planFile = planFlag >= 0 ? rest[planFlag + 1] : undefined;
-  const words = planFlag >= 0 ? rest.filter((_, i) => i !== planFlag && i !== planFlag + 1) : rest;
-  if (!words.length || (planFlag >= 0 && !planFile)) {
-    console.error('Usage: npm run orchestrate -- [--plan plan.json] <objective>   |   npm run resume -- <run-id>');
+  // orchestrate [--scenario dir] [--plan file.json] [objective]: plan (or take a written plan), ask for approval, run.
+  // resume <run-id>: continue a run that was interrupted or is held by assurance.
+  const flag = (name: string): string | undefined => {
+    const at = rest.indexOf(name);
+    return at >= 0 ? rest.splice(at, 2)[1] ?? '' : undefined;
+  };
+  const planFile = flag('--plan');
+  const scenario = flag('--scenario');
+  const objective = rest.join(' ') || (scenario ? readFileSync(resolve(scenario, 'objective.md'), 'utf8').trim() : '');
+  if (planFile === '' || scenario === '' || (command === 'resume' ? rest.length !== 1 : !objective)) {
+    console.error('Usage: npm run orchestrate -- [--scenario dir] [--plan plan.json] [objective]   |   npm run resume -- <run-id>');
     process.exit(2);
   }
-  const { harness, orchestrator, store, start } = platform();
+  // A run always uses the knowledge folder it started with, also after a restart.
+  const remembered = command === 'resume'
+    ? new ProjectMemory(openState(resolve(stateDir, 'state.sqlite'))).entries(rest[0]!, 'decision').find((d) => d.key === 'knowledge-dir')?.content
+    : undefined;
+  const { harness, orchestrator, store, project, knowledgeDir, start } = platform(
+    typeof remembered === 'string' ? remembered : scenario ? resolve(scenario, 'knowledge') : undefined);
   try {
     await start();
-    let runId = words[0]!;
+    let runId = rest[0]!;
     if (command === 'orchestrate') {
-      const objective = words.join(' ');
       const planned = planFile
         ? orchestrator.submitPlan({ user, objective, plan: JSON.parse(readFileSync(resolve(planFile), 'utf8')) as Json })
         : await orchestrator.plan({ user, objective });
       runId = planned.runId;
+      project.put(runId, 'decision', 'knowledge-dir', knowledgeDir);
       console.error(`\nPlan for ${runId}:`);
       for (const t of planned.plan.tasks)
         console.error(`  ${t.id}  [${t.agent}${t.skills.length ? `; skills ${t.skills.join(', ')}` : ''}]${t.dependsOn.length ? `  after ${t.dependsOn.join(', ')}` : ''}\n      ${t.objective}`);
+      console.error('  Then, run by the platform: independent assurance, one rework round if needed, and the final report.');
     }
     if (store.run(runId)?.status === 'planned')
       orchestrator.approvePlan(runId, user, await ask(`\nApprove this plan and run it as ${user}? [y/N] `) ? 'approve' : 'deny');
@@ -174,8 +190,21 @@ if (command === 'verify-ledger') {
       console.log(`Plan for ${runId} was not approved. Nothing ran.`);
       process.exitCode = 1;
     } else {
-      const summary = await orchestrator.execute(runId, { approver });
+      let summary = await orchestrator.execute(runId, { approver });
+      if (summary.status === 'held') {
+        const verdict = (summary.tasks.findLast((t) => t.id.startsWith('assurance'))?.result ?? {}) as { summary?: string; findings?: { severity: string; task: string; issue: string }[] };
+        console.error(`\nIndependent assurance FAILED this work, so no report was produced.\n${verdict.summary ?? ''}`);
+        for (const f of verdict.findings ?? []) console.error(`  [${f.severity}] ${f.task}: ${f.issue}`);
+        const reason = await prompt(`\nTo override as ${user} and produce the report anyway, type a reason. Leave empty to stop here: `);
+        if (reason) {
+          orchestrator.overrideAssurance(runId, user, reason);
+          summary = await orchestrator.execute(runId, { approver });
+        }
+      }
       report(summary);
+      const path = orchestrator.reportPath(runId);
+      if (summary.status === 'completed' && path) console.log(`\nFinal report: ${path}\n\n${readFileSync(path, 'utf8')}`);
+      if (summary.status === 'held') console.log(`\nHeld by assurance. An approver can override with: npm run resume -- ${runId}`);
       process.exitCode = summary.status === 'completed' ? 0 : 1;
     }
   } catch (e) {
@@ -188,6 +217,6 @@ if (command === 'verify-ledger') {
   const store = new RunStore(openState(resolve(stateDir, 'state.sqlite')));
   for (const run of store.runs()) console.log(`${run.id}  ${run.status.padEnd(9)}  ${run.createdAt}  ${run.user}  ${run.objective.slice(0, 80)}`);
 } else {
-  console.error('Commands: orchestrate [--plan file] <objective> | resume <run-id> | runs | run <agent-id> [--skills a,b] <task> | ask <model-policy> <question> | registry check|lock | verify-ledger');
+  console.error('Commands: orchestrate [--scenario dir] [--plan file] [objective] | resume <run-id> | runs | run <agent-id> [--skills a,b] <task> | ask <model-policy> <question> | registry check|lock | verify-ledger');
   process.exit(2);
 }

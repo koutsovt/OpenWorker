@@ -1,0 +1,24 @@
+id: solution-architecture-assessment
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Assess solution options against requirements and recommend a target architecture with recorded decisions.
+scope: Choosing or validating the architecture of a business application. Not detailed design.
+inputs:
+  - "The objective and requirements"
+  - "Evidence about the current system and constraints"
+outputs:
+  - "Options considered, with the criteria used to compare them"
+  - "A recommended target architecture"
+  - "Architecture decisions, each with the options rejected and why"
+  - "Risks, assumptions and open questions"
+qualityCriteria:
+  - "At least two real options are compared, including staying as is where that is possible"
+  - "Every decision names what it trades away"
+  - "Assumptions are separated from facts"
+evidenceRequirements:
+  - "Claims about the current system cite evidence records"
+  - "A requirement that drives a decision is cited"
+dependencies: []
+applicableRoles: [solution-architecture]
+suggestedTools: []

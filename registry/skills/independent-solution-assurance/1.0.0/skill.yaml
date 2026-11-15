@@ -1,0 +1,22 @@
+id: independent-solution-assurance
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Review a set of solution outputs as a whole and give a verdict with findings by severity.
+scope: Independent review of analysis and design outputs before they are consolidated. Not a rewrite of the work.
+inputs:
+  - "The objective"
+  - "The outputs under review and the evidence they cite"
+outputs:
+  - "Findings, each with the output it concerns, a severity and what would resolve it"
+  - "An overall verdict: pass, conditional or fail"
+qualityCriteria:
+  - "Each output is reviewed against the objective and against the other outputs"
+  - "Each finding is specific enough for its author to act on"
+  - "The verdict follows from the findings"
+evidenceRequirements:
+  - "A finding that a claim is unsupported names the claim and the evidence checked"
+dependencies:
+  - "evidence-verification"
+applicableRoles: [assurance]
+suggestedTools: []

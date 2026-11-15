@@ -1,0 +1,24 @@
+id: security-threat-modelling
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Identify the threats to a solution and the controls that address them, with residual risk.
+scope: A proposed or changed application and its data flows. Not a penetration test or a compliance audit.
+inputs:
+  - "The target architecture and data flows"
+  - "The classification of the data handled"
+outputs:
+  - "Assets and trust boundaries"
+  - "Threats, each with a rating and its basis"
+  - "Controls mapped to threats"
+  - "Residual risks and unconfirmed controls"
+qualityCriteria:
+  - "Every trust boundary and data flow is examined"
+  - "Each threat has at least one control or an explicit acceptance"
+  - "Ratings state likelihood and impact separately"
+evidenceRequirements:
+  - "Statements about what data is held and where it flows cite evidence records"
+  - "A control described as existing cites evidence; otherwise it is marked proposed"
+dependencies: []
+applicableRoles: [security]
+suggestedTools: []

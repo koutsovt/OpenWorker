@@ -54,6 +54,8 @@ export interface AgentDefinition {
   modelPolicy: string;
   eligibleSkills: string[];
   dataClassificationCeiling: Classification;
+  /** Name of the output contract a task result from this agent must satisfy. */
+  outputContract?: string;
   limits?: { maxModelCalls: number; maxOutputTokens: number };
   digest: string;
 }
@@ -180,10 +182,14 @@ export class Registry {
         const limits = r.get('limits') as { maxModelCalls?: unknown; maxOutputTokens?: unknown } | undefined;
         if (limits && (!Number.isInteger(limits.maxModelCalls) || !Number.isInteger(limits.maxOutputTokens)))
           throw new RegistryError('invalid', `agent ${id}@${version}: limits need integer maxModelCalls and maxOutputTokens`);
+        const outputContract = r.get('outputContract');
+        if (outputContract !== undefined && typeof outputContract !== 'string')
+          throw new RegistryError('invalid', `agent ${id}@${version}: outputContract must be a contract name`);
         this.agents.set(id, [...(this.agents.get(id) ?? []), {
           id, version: version as number, status: r.oneOf('status', STATUSES), owner: r.str('owner'), purpose: r.str('purpose'),
           instructions: r.str('instructions'), allowedTools, modelPolicy: r.str('modelPolicy'), eligibleSkills: r.list('eligibleSkills'),
           dataClassificationCeiling: r.oneOf('dataClassificationCeiling', CLASSIFICATIONS),
+          ...(outputContract ? { outputContract } : {}),
           ...(limits ? { limits: { maxModelCalls: limits.maxModelCalls as number, maxOutputTokens: limits.maxOutputTokens as number } } : {}),
           digest: digestOf(r.content()),
         }]);

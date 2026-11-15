@@ -60,7 +60,7 @@ export async function runTask(
     }
     if (timedOut) result = { ...result, status: 'failed', output: null, failure: { category: 'timeout', retryable: false } };
 
-    gateway.recordUsage(selection.alias, result.usage, `agent:${name}`);
+    gateway.recordUsage(selection.alias, result.usage, `agent:${name}`, request.tag);
     ledger.append('task.finished', request.actor, {
       agent: name, startedSeq: started.seq, status: result.status, failure: result.failure?.category ?? null,
     });

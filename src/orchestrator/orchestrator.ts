@@ -3,15 +3,19 @@
 // runs each task as a fresh agent instance from an approved definition. The planner
 // model never instantiates anything itself.
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AuditLedger } from '../audit/ledger.ts';
 import type { Budget } from '../governance/budget.ts';
 import type { Governance } from '../governance/policy.ts';
 import type { Json } from '../harness/port.ts';
-import type { ProjectMemory } from '../memory/state.ts';
+import type { EvidenceStore, ProjectMemory } from '../memory/state.ts';
 import { RegistryError, type Registry } from '../registry/registry.ts';
 import { GovernanceError, type AgentRunOutcome, type Approver, type Workforce } from '../runtime/workforce.ts';
 import type { ResultInbox } from '../tools/result.ts';
-import { parsePlan, PlanError, validatePlan, type Plan } from './graph.ts';
+import { checkResult, CONTRACT_SHAPES, isContract, type AssuranceResult, type ContractName } from './contracts.ts';
+import { isStageTask, parsePlan, PlanError, STAGE, validatePlan, type Plan } from './graph.ts';
+import { renderReport } from './report.ts';
 import type { RunRecord, RunStatus, RunStore, TaskRecord, TaskStatus } from './store.ts';
 
 export class OrchestratorError extends Error {
@@ -33,6 +37,13 @@ export interface OrchestratorOptions {
   maxPlanAttempts?: number;
   /** Applied to every task and to planning unless the call gives its own. */
   budget?: Budget;
+  /**
+   * Agent definition that reviews the planned work. With it set, every run ends with assurance,
+   * at most one rework round, and a final report. `null` runs the planned tasks only.
+   */
+  assuranceAgent?: string | null;
+  /** Where final reports are written, as `<run id>.md`. */
+  reportsDir?: string;
 }
 
 interface Deps {
@@ -42,7 +53,10 @@ interface Deps {
   ledger: AuditLedger;
   store: RunStore;
   project: ProjectMemory;
+  evidence: EvidenceStore;
   results: ResultInbox;
+  /** The provider behind a model alias; used to check that assurance ran on a different provider than the authors. */
+  providerOf?: (alias: string) => string | undefined;
 }
 
 export interface RunSummary {
@@ -57,14 +71,15 @@ const unfinished: TaskStatus[] = ['failed', 'blocked', 'needs_attention'];
 
 export class Orchestrator {
   private readonly deps: Deps;
-  private readonly options: Required<Omit<OrchestratorOptions, 'budget'>> & { budget: Budget };
+  private readonly options: Required<Omit<OrchestratorOptions, 'budget' | 'reportsDir'>> & { budget: Budget; reportsDir: string | undefined };
 
   constructor(deps: Deps, options: OrchestratorOptions = {}) {
     this.deps = deps;
     this.options = {
       plannerAgent: options.plannerAgent ?? 'orchestrator', concurrency: Math.max(1, options.concurrency ?? 3),
       maxAttempts: Math.max(1, options.maxAttempts ?? 2), maxPlanAttempts: Math.max(1, options.maxPlanAttempts ?? 2),
-      budget: options.budget ?? {},
+      budget: options.budget ?? {}, assuranceAgent: options.assuranceAgent === undefined ? 'assurance' : options.assuranceAgent,
+      reportsDir: options.reportsDir,
     };
   }
 
@@ -89,7 +104,7 @@ export class Orchestrator {
       }
       const parsed = parsePlan(proposed);
       problems = proposed === undefined ? [`no plan was submitted; call ${RESULT_TOOL}`]
-        : parsed.problems.length ? parsed.problems : validatePlan(parsed.plan, registry, { exclude: [planner.id] });
+        : parsed.problems.length ? parsed.problems : validatePlan(parsed.plan, registry, { exclude: this.unplannable() });
       if (!problems.length) return { runId: this.createRun(request.user, request.objective, parsed.plan, outcome.instance), plan: parsed.plan };
       ledger.append('plan.rejected', 'system', { proposedBy: outcome.instance, attempt, problems });
     }
@@ -105,7 +120,7 @@ export class Orchestrator {
       throw new GovernanceError(mayRun.code, mayRun.reason);
     }
     const parsed = parsePlan(request.plan);
-    const problems = parsed.problems.length ? parsed.problems : validatePlan(parsed.plan, registry, { exclude: [this.options.plannerAgent] });
+    const problems = parsed.problems.length ? parsed.problems : validatePlan(parsed.plan, registry, { exclude: this.unplannable() });
     if (problems.length) {
       ledger.append('plan.rejected', 'system', { proposedBy: `user:${request.user}`, attempt: 1, problems });
       throw new PlanError(problems);
@@ -140,6 +155,7 @@ export class Orchestrator {
     if (run.status === 'planned') throw new OrchestratorError('PLAN_NOT_APPROVED', `Run ${runId} has no approved plan`);
     if (run.status === 'rejected') throw new OrchestratorError('PLAN_REJECTED', `The plan for run ${runId} was rejected`);
     if (run.status === 'completed' || run.status === 'failed') return this.summary(runId);
+    if (run.status === 'held' && !this.override(runId)) return this.summary(runId);
     const actor = `user:${run.user}`;
 
     const interrupted = store.tasks(runId).filter((t) => t.status === 'running');
@@ -152,9 +168,47 @@ export class Orchestrator {
         ledger.append('run.task_recovered', 'system', { run: runId, task: task.id });
       }
     }
-    ledger.append(run.status === 'running' ? 'run.resumed' : 'run.started', actor, { run: runId, interrupted: interrupted.map((t) => t.id) });
+    ledger.append(run.status === 'approved' ? 'run.started' : 'run.resumed', actor, { run: runId, interrupted: interrupted.map((t) => t.id) });
     store.setRunStatus(runId, 'running');
 
+    await this.drain(run, options);
+    const status: RunStatus = this.options.assuranceAgent
+      ? await this.stages(run, this.options.assuranceAgent, options)
+      : store.tasks(runId).every((t) => t.status === 'completed') ? 'completed' : 'failed';
+    store.setRunStatus(runId, status);
+    ledger.append(status === 'held' ? 'run.held' : 'run.finished', actor, {
+      run: runId, status, tasks: Object.fromEntries(store.tasks(runId).map((t) => [t.id, t.status])),
+    });
+    return this.summary(runId);
+  }
+
+  /**
+   * Lets a run that assurance failed go on to its report. Only an approver can do this, a reason
+   * is required, and both are recorded and printed in the report. Call `execute` afterwards.
+   */
+  overrideAssurance(runId: string, approver: string, reason: string): void {
+    const { governance, ledger, project } = this.deps;
+    const run = this.runOrThrow(runId);
+    if (run.status !== 'held') throw new OrchestratorError('NOT_HELD', `Run ${runId} is ${run.status}, not held by assurance`);
+    const allowed = governance.mayApprove(approver);
+    if (!allowed.allow) {
+      ledger.append('assurance.override_rejected', `user:${approver}`, { run: runId, code: allowed.code, reason: allowed.reason });
+      throw new GovernanceError(allowed.code, allowed.reason);
+    }
+    if (!reason.trim()) throw new OrchestratorError('REASON_REQUIRED', 'An override needs a reason');
+    project.put(runId, 'decision', 'assurance-override', { approver, reason: reason.trim() });
+    ledger.append('assurance.overridden', `user:${approver}`, { run: runId, reason: reason.trim() });
+  }
+
+  /** Path of the final report for a completed run, when reports are being written. */
+  reportPath(runId: string): string | undefined {
+    return this.options.reportsDir ? join(this.options.reportsDir, `${runId}.md`) : undefined;
+  }
+
+  /** Runs every task that is ready until nothing more can start. */
+  private async drain(run: RunRecord, options: { approver?: Approver; budget?: Budget }): Promise<void> {
+    const { store } = this.deps;
+    const runId = run.id;
     const active = new Map<string, Promise<void>>();
     while (true) {
       this.blockDependants(runId);
@@ -169,14 +223,102 @@ export class Orchestrator {
       if (!active.size) break;
       await Promise.race(active.values());
     }
+  }
 
-    const final = store.tasks(runId);
-    const status: RunStatus = final.every((t) => t.status === 'completed') ? 'completed' : 'failed';
-    store.setRunStatus(runId, status);
-    ledger.append('run.finished', actor, {
-      run: runId, status, tasks: Object.fromEntries(final.map((t) => [t.id, t.status])),
+  /**
+   * What the platform adds after the planned work: independent assurance, at most one rework
+   * round with a second review, the gate on a fail verdict, and the final report. Each step is
+   * a task in the run store, and the next step is decided from stored results alone, so a
+   * killed run resumes at the step it had reached.
+   */
+  private async stages(run: RunRecord, assuranceAgent: string, options: { approver?: Approver; budget?: Budget }): Promise<RunStatus> {
+    const { store, registry, ledger } = this.deps;
+    while (true) {
+      const tasks = store.tasks(run.id);
+      if (!tasks.every((t) => t.status === 'completed')) return 'failed';
+      const by = new Map(tasks.map((t) => [t.id, t]));
+      const planned = tasks.filter((t) => !isStageTask(t.id));
+      const skills = registry.eligibleSkills(registry.agent(assuranceAgent)).map((s) => s.id);
+
+      const first = by.get(STAGE.assurance);
+      if (!first) {
+        store.addTask(run.id, { id: STAGE.assurance, agent: assuranceAgent, objective: ASSURANCE_OBJECTIVE, skills, dependsOn: planned.map((t) => t.id) });
+        await this.drain(run, options);
+        continue;
+      }
+      this.recordVerdict(run, first, tasks);
+      const firstVerdict = first.result as unknown as AssuranceResult;
+      // Findings that must be fixed go back to their authors, once.
+      const targets = firstVerdict.verdict === 'pass' ? [] : planned.filter((t) =>
+        firstVerdict.findings.some((f) => f.severity !== 'minor' && f.task.replace(/-rework$/, '') === t.id));
+      const second = by.get(STAGE.reassurance);
+      if (targets.length && !second) {
+        for (const t of targets)
+          store.addTask(run.id, { id: STAGE.rework(t.id), agent: t.agent, objective: reworkObjective(t), skills: t.skills, dependsOn: [...t.dependsOn, t.id, STAGE.assurance] });
+        store.addTask(run.id, {
+          id: STAGE.reassurance, agent: assuranceAgent, objective: REASSURANCE_OBJECTIVE, skills,
+          dependsOn: [...planned.map((t) => (targets.includes(t) ? STAGE.rework(t.id) : t.id)), STAGE.assurance],
+        });
+        ledger.append('assurance.rework_requested', 'system', { run: run.id, tasks: targets.map((t) => t.id) });
+        await this.drain(run, options);
+        continue;
+      }
+      const final = second ?? first;
+      if (second) this.recordVerdict(run, second, tasks);
+      if ((final.result as unknown as AssuranceResult).verdict === 'fail' && !this.override(run.id)) {
+        ledger.append('assurance.blocked', 'system', { run: run.id, task: final.id });
+        return 'held';
+      }
+      if (!by.get(STAGE.report)) {
+        store.addTask(run.id, {
+          id: STAGE.report, agent: this.options.plannerAgent, objective: REPORT_OBJECTIVE, skills: [],
+          dependsOn: [...planned.map((t) => (by.has(STAGE.rework(t.id)) ? STAGE.rework(t.id) : t.id)), final.id],
+        });
+        await this.drain(run, options);
+        continue;
+      }
+      this.writeReport(run);
+      return 'completed';
+    }
+  }
+
+  /** Records a verdict once, with whether the reviewer ran on a different provider than every author. */
+  private recordVerdict(run: RunRecord, assurance: TaskRecord, tasks: TaskRecord[]): void {
+    const { project, ledger, providerOf } = this.deps;
+    const key = `verdict:${assurance.id}`;
+    if (project.entries(run.id, 'decision').some((d) => d.key === key)) return;
+    const verdict = assurance.result as unknown as AssuranceResult;
+    const provider = (assurance.model && providerOf?.(assurance.model)) || null;
+    const authors = new Set(tasks.filter((t) => assurance.dependsOn.includes(t.id) && t.id !== STAGE.assurance).map((t) => (t.model && providerOf?.(t.model)) || null));
+    const independent = provider !== null && !authors.has(provider);
+    const count = (severity: string) => verdict.findings.filter((f) => f.severity === severity).length;
+    project.put(run.id, 'decision', key, { task: assurance.id, verdict: verdict.verdict, provider, independent });
+    ledger.append('assurance.verdict', `agent:${assurance.instance}`, {
+      run: run.id, task: assurance.id, verdict: verdict.verdict, critical: count('critical'), major: count('major'), minor: count('minor'), provider, independent,
     });
-    return this.summary(runId);
+    if (!independent) ledger.append('assurance.independence_reduced', 'system', { run: run.id, task: assurance.id, provider });
+  }
+
+  private override(runId: string): boolean {
+    return this.deps.project.entries(runId, 'decision').some((d) => d.key === 'assurance-override');
+  }
+
+  private writeReport(run: RunRecord): void {
+    const { store, evidence, project, ledger, providerOf } = this.deps;
+    const path = this.reportPath(run.id);
+    if (!path) return;
+    const text = renderReport({
+      run, tasks: store.tasks(run.id), evidence: evidence.list(run.id), decisions: project.entries(run.id, 'decision'),
+      ledger: ledger.records(), providerOf: providerOf ?? (() => undefined),
+    });
+    mkdirSync(this.options.reportsDir!, { recursive: true });
+    writeFileSync(path, text);
+    ledger.append('report.written', 'system', { run: run.id, digest: createHash('sha256').update(text).digest('hex') });
+  }
+
+  /** Agents a plan may not use: the planner, and the reviewer, which the platform schedules itself so it cannot be planned away. */
+  private unplannable(): string[] {
+    return [this.options.plannerAgent, ...(this.options.assuranceAgent ? [this.options.assuranceAgent] : [])];
   }
 
   summary(runId: string): RunSummary {
@@ -228,7 +370,10 @@ export class Orchestrator {
     const actor = `user:${run.user}`;
     const base = { run: run.id, task: task.id, agent: task.agent };
     try {
-      const wantsResult = registry.agent(task.agent).allowedTools.includes(RESULT_TOOL);
+      const agent = registry.agent(task.agent);
+      const wantsResult = agent.allowedTools.includes(RESULT_TOOL);
+      const contract = contractFor(task, agent.outputContract);
+      const reviewable = new Set(all.map((t) => t.id).filter((id) => !id.startsWith(STAGE.assurance) && id !== STAGE.report));
       const upstream = all.filter((t) => task.dependsOn.includes(t.id));
       let previous: string | undefined;
       for (let attempt = 1; ; attempt++) {
@@ -236,7 +381,7 @@ export class Orchestrator {
         ledger.append('run.task_started', actor, { ...base, attempt });
         const outcome: AgentRunOutcome = await workforce.runAgent({
           agentId: task.agent, user: run.user, skills: task.skills, budget: options.budget ?? this.options.budget,
-          input: taskBrief(run.objective, task, upstream, wantsResult, previous),
+          input: taskBrief(run.objective, task, upstream, wantsResult, contract, previous),
           run: { runId: run.id, taskId: task.id },
           onSideEffect: () => store.markSideEffects(run.id, task.id),
           ...(options.approver ? { approver: options.approver } : {}),
@@ -244,23 +389,27 @@ export class Orchestrator {
         const submitted = results.take(outcome.instance);
         const result: Json | undefined = outcome.status !== 'completed' ? undefined : wantsResult ? submitted : { text: outcome.output };
         const ran = { instance: outcome.instance, model: outcome.model, tried: outcome.tried };
-        if (result !== undefined) {
+        const invalid = result === undefined ? [] : checkResult(contract, result, {
+          evidenceIds: new Set(this.deps.evidence.list(run.id).map((e) => e.id)), taskIds: reviewable,
+        });
+        if (result !== undefined && !invalid.length) {
           // The artefact is written before the task is marked complete: a kill between the two re-runs the task rather than losing its result.
           project.put(run.id, 'artefact', task.id, { agent: task.agent, result });
           store.finishTask(run.id, task.id, { ...ran, status: 'completed', result, failure: null });
           ledger.append('run.task_completed', actor, { ...base, attempt, instance: outcome.instance, model: outcome.model, resultDigest: digest(result) });
           return;
         }
-        const failure = outcome.status === 'completed' ? 'no_result' : outcome.failure ?? outcome.status;
+        const failure = invalid.length ? `invalid_result: ${invalid.join('; ').slice(0, 600)}`
+          : outcome.status === 'completed' ? 'no_result' : outcome.failure ?? outcome.status;
         // Budget breaches and cancellations would only repeat; a task that changed something must not be repeated at all.
-        const retry = attempt < this.options.maxAttempts && !outcome.sideEffects && (failure === 'no_result' || outcome.status === 'failed');
+        const retry = attempt < this.options.maxAttempts && !outcome.sideEffects && (outcome.status === 'completed' || outcome.status === 'failed');
         if (!retry) {
           const status: TaskStatus = outcome.sideEffects ? 'needs_attention' : 'failed';
           store.finishTask(run.id, task.id, { ...ran, status, result: null, failure });
           ledger.append(status === 'failed' ? 'run.task_failed' : 'run.task_needs_attention', actor, { ...base, attempt, instance: outcome.instance, reason: failure });
           return;
         }
-        ledger.append('run.task_retried', actor, { ...base, attempt, reason: failure });
+        ledger.append('run.task_retried', actor, { ...base, attempt, reason: failure.split(':')[0]! });
         previous = failure;
       }
     } catch (e) {
@@ -273,7 +422,7 @@ export class Orchestrator {
 
   private planningBrief(objective: string, problems: string[]): string {
     const { registry } = this.deps;
-    const catalogue = registry.usableAgents().filter((a) => a.id !== this.options.plannerAgent).map((a) => ({
+    const catalogue = registry.usableAgents().filter((a) => !this.unplannable().includes(a.id)).map((a) => ({
       agent: a.id, purpose: a.purpose,
       skills: registry.eligibleSkills(a).map((s) => ({ id: s.id, purpose: s.purpose, scope: s.scope })),
     }));
@@ -286,6 +435,7 @@ export class Orchestrator {
       '- dependsOn: ids of tasks whose results this task needs. Tasks with no dependency between them run in parallel.',
       '- objective: what this task must produce, written for the agent that will do it.',
       'The platform validates the plan and a person approves it before anything runs.',
+      ...(this.options.assuranceAgent ? ['Do not plan a review or a final report: once your tasks finish, the platform runs independent assurance and then the report itself.'] : []),
       '',
       `Catalogue of approved agents and their eligible skills:\n${JSON.stringify(catalogue, null, 2)}`,
       ...(problems.length ? ['', `Your previous plan was rejected by the platform for these reasons. Submit a corrected plan:\n- ${problems.join('\n- ')}`] : []),
@@ -295,8 +445,42 @@ export class Orchestrator {
   }
 }
 
+const ASSURANCE_OBJECTIVE = [
+  'Independently review the results of the tasks below against the overall objective. You did not produce them.',
+  'For each result: check its claims against the evidence it cites, using evidence.get to read what was actually retrieved; look for unsupported or contradicted claims, gaps against the objective, and inconsistencies between results.',
+  'Give each finding the id of the task it is about, a severity (critical, major or minor) and what would resolve it.',
+  'Verdict: pass if nothing material is wrong; conditional if the work is usable once the findings are addressed; fail if it must not be relied on.',
+  'Report findings only. Do not repair the work.',
+].join('\n');
+const REASSURANCE_OBJECTIVE = [
+  'Second and final review. Some results were revised after your first review; the revised results and your first findings are below.',
+  'Check whether each earlier finding is resolved and whether the revisions introduced new problems, then review the whole as before.',
+  'Report only the findings that remain, each with the id of the task it is about, and give a final verdict: pass, conditional or fail.',
+].join('\n');
+const REPORT_OBJECTIVE = [
+  'Write the final report for the overall objective from the task results and the assurance findings below. Add no new analysis and no claim that is not in a task result.',
+  'Organise it into sections that answer the objective. For each section, list the evidence ids that the underlying task results cite for it.',
+  'State plainly any assurance finding that remains open, and carry unresolved questions into openQuestions.',
+].join('\n');
+const reworkObjective = (task: TaskRecord): string => [
+  `Revise your earlier result for task "${task.id}" to resolve the assurance findings about it. Your earlier result and the findings are below.`,
+  'Keep what was sound, change what the findings require, and submit the complete revised result, not a list of changes.',
+  `The original task was:\n${task.objective}`,
+].join('\n');
+
+/** The stage decides the contract for platform tasks; otherwise the agent definition does. */
+function contractFor(task: TaskRecord, agentContract: string | undefined): ContractName | undefined {
+  if (task.id === STAGE.assurance || task.id === STAGE.reassurance) return 'assurance';
+  if (task.id === STAGE.report) return 'report';
+  if (agentContract === undefined) return undefined;
+  if (!isContract(agentContract)) throw new OrchestratorError('UNKNOWN_CONTRACT', `Unknown output contract ${agentContract}`);
+  return agentContract;
+}
+
 /** What one task is told. Upstream results are passed as labelled data, never merged into the instructions. */
-function taskBrief(objective: string, task: TaskRecord, upstream: TaskRecord[], wantsResult: boolean, previousFailure: string | undefined): string {
+function taskBrief(
+  objective: string, task: TaskRecord, upstream: TaskRecord[], wantsResult: boolean, contract: ContractName | undefined, previousFailure: string | undefined,
+): string {
   return [
     `You are working on one task of a larger piece of work.`,
     `<overall-objective>\n${objective}\n</overall-objective>`,
@@ -306,6 +490,11 @@ function taskBrief(objective: string, task: TaskRecord, upstream: TaskRecord[], 
       ...upstream.map((u) => `<task-result task="${u.id}" agent="${u.agent}">\n${JSON.stringify(u.result, null, 2)}\n</task-result>`),
     ] : []),
     ...(wantsResult ? [`Hand back your result by calling ${RESULT_TOOL} with {"result": {...}}. A reply in text alone does not count as a result.`] : []),
+    ...(contract ? [
+      `The result must have this shape: ${CONTRACT_SHAPES[contract]}`,
+      'Cite evidence only by evidence ids: those returned to you by knowledge.read, or those cited in the task results above. An id that does not exist in this run is rejected.',
+    ] : []),
     ...(previousFailure === 'no_result' ? [`A previous attempt at this task ended without calling ${RESULT_TOOL}. You must call it.`] : []),
+    ...(previousFailure?.startsWith('invalid_result') ? [`A previous attempt was rejected by the platform. Fix these problems and submit again:\n${previousFailure.slice('invalid_result: '.length)}`] : []),
   ].join('\n\n');
 }

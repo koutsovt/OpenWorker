@@ -1,0 +1,21 @@
+id: requirements-traceability
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Trace each requirement to where the work addresses it, and show which requirements are unmet or unaddressed.
+scope: Any design or assessment that must satisfy a stated set of requirements.
+inputs:
+  - "The requirements, with their identifiers"
+  - "The work to be traced"
+outputs:
+  - "A trace of each requirement to the part of the work that addresses it"
+  - "Requirements that are unmet, partly met or not addressed"
+  - "Elements of the work that trace to no requirement"
+qualityCriteria:
+  - "Every requirement appears in the trace, including those not addressed"
+  - "Met is distinguished from addressed-but-unverified"
+evidenceRequirements:
+  - "Each requirement cites the evidence record it comes from"
+dependencies: []
+applicableRoles: [solution-architecture, data, assurance]
+suggestedTools: []

@@ -1,6 +1,6 @@
 id: assurance
 version: 1
-status: approved
+status: retired
 owner: architecture-practice
 purpose: Independently validate the outputs of other agents and report findings to the orchestrator.
 instructions: |

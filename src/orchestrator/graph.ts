@@ -28,6 +28,9 @@ export class PlanError extends Error {
 
 export const PLAN_LIMITS = { maxTasks: 12, maxObjectiveChars: 4000 };
 const TASK_ID = /^[a-z][a-z0-9-]{0,31}$/;
+/** Ids the platform uses for the stages it adds after the planned work. */
+export const STAGE = { assurance: 'assurance', reassurance: 'assurance-2', report: 'report', rework: (id: string) => `${id}-rework` };
+export const isStageTask = (id: string): boolean => id === STAGE.assurance || id === STAGE.reassurance || id === STAGE.report || id.endsWith('-rework');
 
 const strings = (value: unknown): string[] | undefined =>
   value === undefined || value === null ? [] : Array.isArray(value) && value.every((x) => typeof x === 'string') ? value : undefined;
@@ -68,6 +71,7 @@ export function validatePlan(plan: Plan, registry: Registry, options: { exclude?
   }
   for (const task of plan.tasks) {
     const where = `task ${task.id}`;
+    if (isStageTask(task.id)) problems.push(`${where}: this id is reserved for the platform's assurance, rework and report stages`);
     if (task.objective.length > PLAN_LIMITS.maxObjectiveChars) problems.push(`${where}: objective is longer than ${PLAN_LIMITS.maxObjectiveChars} characters`);
     for (const dependency of task.dependsOn) {
       if (dependency === task.id) problems.push(`${where}: depends on itself`);

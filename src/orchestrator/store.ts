@@ -4,7 +4,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Json } from '../harness/port.ts';
 import type { Plan, PlannedTask } from './graph.ts';
 
-export type RunStatus = 'planned' | 'approved' | 'rejected' | 'running' | 'completed' | 'failed';
+/** `held`: assurance failed the work; a person must override before a report is produced. */
+export type RunStatus = 'planned' | 'approved' | 'rejected' | 'running' | 'held' | 'completed' | 'failed';
 /** `blocked`: a task it depends on did not complete. `needs_attention`: it stopped after changing something, so a person must decide. */
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'needs_attention';
 
@@ -58,6 +59,13 @@ export class RunStore {
       this.db.exec('ROLLBACK');
       throw e;
     }
+  }
+
+  /** Appends a task the platform adds after planning (assurance, rework, report). Adding an existing id does nothing. */
+  addTask(runId: string, task: PlannedTask): void {
+    this.db.prepare(`INSERT OR IGNORE INTO tasks (run_id, id, position, agent, objective, skills, depends_on, status, updated_at)
+      VALUES (?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE run_id = ?), ?, ?, ?, ?, 'pending', ?)`)
+      .run(runId, task.id, runId, task.agent, task.objective, JSON.stringify(task.skills), JSON.stringify(task.dependsOn), now());
   }
 
   run(id: string): RunRecord | undefined {

@@ -1,6 +1,6 @@
 id: orchestrator
 version: 1
-status: approved
+status: retired
 owner: architecture-practice
 purpose: Break an objective into a task graph for the approved specialist agents. Plans only; does none of the work.
 instructions: |

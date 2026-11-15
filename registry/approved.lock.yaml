@@ -1,6 +1,16 @@
 # Digests of approved agent and skill definitions. Changed only by reviewed pull request.
 agents:
-  assurance@1: e24f2f406a9fc06989052f7946038ad2f44d32cd6c0e59aab92d187f967cbc34
-  orchestrator@1: 95e8c7db50abd3ec98797c4282712e08c82e23af548f9801eb8cdb8bfd05957f
+  assurance@2: bed2307bf8ba8bebe8274ba431e35f3570dbb40ae2b319123c44a80a9e290b0d
+  data@1: d689b9ff02ffe957b72faa1f2da59bb6a7ff94ae45c60c1b1d55070f9daeaa7a
+  orchestrator@2: c8ff4724f76e42024eeec08dd5118e7443d0b8dcde1d47593538b27a0088c211
+  research@1: b329e9c6504e310af6c60988db71759d9b57dd2c838fdcb26297852038437e5e
+  security@1: 86474dd5e2cab346a0087cda63cd8ab05dcbd8403def8eeb7d4fd6d932b78839
+  solution-architecture@1: 31996ec77173c17bc2f38a9178b236adefe21fb4e570c55ca89b38300946b4b1
 skills:
   evidence-verification@1.0.0: a344b3b83ce446647cea847ba26a8e67e3bd1c29192e2f1ae780e067a181fe9f
+  hosting-architecture-review@1.0.0: c20d01757422cdd84fae4f900e292890957d938611291914a3bf3704e418e6ff
+  independent-solution-assurance@1.0.0: da82a3aa7ca5e80cb41c91ce45f9534b851ffbf377e2e362c61817a4daf0a36a
+  integration-architecture@1.0.0: 5f58ef6a2c8e796fb95cf1a207c758e766043907e375e9d64030e2a94d76bf64
+  requirements-traceability@1.0.0: e4f018408cf42b1df3619a7752f78ba0c375a81470261e49fdc396c4d289dc4b
+  security-threat-modelling@1.0.0: 3578733773371ce8cc03eb4e5b53b580b271a719b51fa882c6b5913a9490e2b4
+  solution-architecture-assessment@1.0.0: 84506503123eaea1dc2bd62f7e1266ab5574b0d376adc6983ffa07d50848544a

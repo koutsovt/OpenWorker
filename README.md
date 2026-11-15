@@ -8,7 +8,8 @@ SDK validation results: [spikes/m0/RESULTS.md](spikes/m0/RESULTS.md).
 
 ## Status
 
-Milestones 1 (skeleton), 2 (registries and governance) and 3 (orchestration) are in place:
+Milestones 1 to 4 are in place: skeleton, registries and governance, orchestration, and the proof-of-concept scenario.
+**The scenario has run end to end only with a scripted model in the tests; it has not yet run against real models.**
 
 | Part | Where | State |
 |---|---|---|
@@ -26,8 +27,11 @@ Milestones 1 (skeleton), 2 (registries and governance) and 3 (orchestration) are
 | Command line | `src/cli/main.ts` | Done |
 | Orchestrator: planner, plan gate, task graph, parallel execution, retry, restart recovery | `src/orchestrator/` | Done on the fake engine, including a real process kill. **Not yet run against a real model** |
 | Knowledge search, evidence records, project memory | `src/memory/`, `src/tools/knowledge.ts` | Done |
-| Structured results (`result.submit`) | `src/tools/result.ts` | Done; results are checked for presence, not yet against a per-agent output schema |
-| Proof-of-concept scenario, six agents, seven skills, assurance loop, final report | — | Not started (milestone 4) |
+| Structured results and output contracts | `src/tools/result.ts`, `src/orchestrator/contracts.ts` | Done; a result must match its contract and cite only evidence that exists in the run |
+| Six agents, seven skills | `registry/` | Written and locked. **Review them: the lock is your approval** |
+| Assurance, rework, fail gate, final report | `src/orchestrator/orchestrator.ts`, `report.ts` | Done on the fake engine |
+| Scenario knowledge pack (simulated) | `scenarios/research-ethics-eforms/` | Done |
+| Hardening: injection test set, cost report, deployment decisions | — | Not started (milestone 5) |
 
 ## Run it locally
 
@@ -69,6 +73,31 @@ CHECK_PROVIDER=DeepSeek CHECK_MODEL=<model id> node --env-file=/path/to/private.
 DeepSeek passed this check on 15 Nov 2026 (see [spikes/m0/RESULTS.md](spikes/m0/RESULTS.md)). OpenAI has not been run.
 The OpenWorker engine ignores HTTP proxy settings; on a network that requires a proxy, run
 `scripts/proxy-relay.ts` and set `CHECK_BASE_URL` to it.
+
+## Run the proof-of-concept scenario
+
+```bash
+node --env-file=/path/to/private.env --disable-warning=ExperimentalWarning src/cli/main.ts orchestrate --scenario scenarios/research-ethics-eforms
+```
+
+This reads the objective from the scenario's `objective.md` and limits the agents to its `knowledge/` folder,
+which is simulated data written for the exercise. What happens:
+
+1. The Orchestrator proposes a plan using the Research, Solution Architecture, Security and Data agents. You approve it.
+2. The planned tasks run, in parallel where the plan allows. Each result must match its agent's output contract,
+   and every evidence id it cites must be a passage an agent actually read in this run; otherwise it is sent back once.
+3. The Assurance agent reviews all results. It runs under a different model policy (OpenAI) than the authors (Claude).
+   A plan cannot assign the Assurance agent or skip it: the platform schedules it.
+4. Tasks with a critical or major finding are reworked by their authors, once, and Assurance reviews again.
+5. If the final verdict is `fail`, the run is held and no report is written. A user with the approver role can
+   override with a reason; both are recorded and printed in the report.
+6. The Orchestrator writes the report from the results. The platform appends a traceability section it generates
+   itself: the assurance verdict and findings, the evidence register, models and usage per task, and approvals.
+
+The report is saved to `.state/reports/<run-id>.md`.
+
+Known limits: a rework does not re-run tasks that depended on the reworked one; there is one rework round;
+cost shows as unknown until prices are added to `config/models.yaml`.
 
 ## Orchestrate an objective
 
@@ -114,7 +143,6 @@ What happens to a task when things go wrong:
 | A dependency did not complete | Task marked `blocked`; unrelated tasks still run |
 
 A re-issued task starts a new session, so read-only tool calls it made before the kill are made again.
-Only one agent in the real registry (`assurance`) can be given tasks today; the other definitions arrive in milestone 4.
 
 ## Knowledge and evidence
 

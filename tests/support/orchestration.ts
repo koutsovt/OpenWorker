@@ -141,7 +141,7 @@ export async function buildPlatform(options: PlatformOptions) {
     gateway: new ModelGateway(models, ledger, { M1: 'm-primary', M2: 'm-backup' }),
   });
   await workforce.start(models.providers);
-  const orchestrator = new Orchestrator({ workforce, registry, governance, ledger, store, project, results }, options);
+  const orchestrator = new Orchestrator({ workforce, registry, governance, ledger, store, project, evidence, results }, { assuranceAgent: null, ...options });
   const find = (type: string) => ledger.records().filter((r) => r.type === type);
   /** Registers a hand-written plan, approves it as alice and returns the run id. */
   const approved = (tasks: Json[], user = 'alice'): string => {

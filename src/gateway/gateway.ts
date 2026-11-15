@@ -63,11 +63,16 @@ export class ModelGateway {
     return (usage.inputTokens * price.input + usage.outputTokens * price.output) / 1_000_000;
   }
 
-  recordUsage(alias: string, usage: Usage, actor: string): void {
+  recordUsage(alias: string, usage: Usage, actor: string, instance?: string): void {
     this.ledger.append('model.usage', actor, {
-      model: alias, modelCalls: usage.modelCalls, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+      instance: instance ?? null, model: alias, modelCalls: usage.modelCalls, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
       usageComplete: usage.complete, costUsd: this.cost(alias, usage),
     });
+  }
+
+  /** The provider behind a model alias, or undefined for an unknown alias. */
+  providerOf(alias: string): string | undefined {
+    return this.models.get(alias)?.provider;
   }
 
   private record(type: string, policyId: string, alias: string, actor: string, extra: Record<string, string | string[]>): Selection {

@@ -1,0 +1,24 @@
+id: hosting-architecture-review
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Review where and how a solution is hosted, using open-source components, from local development to a managed host.
+scope: Hosting, deployment and operations of a web application and its database on open-source software. Not application design.
+inputs:
+  - "The proposed solution architecture"
+  - "Non-functional requirements and indicative hosting costs"
+outputs:
+  - "A hosting design for each stage, local and hosted"
+  - "Operational responsibilities: backup, restore, patching, monitoring"
+  - "A cost estimate with assumptions"
+  - "Portability and exit considerations"
+qualityCriteria:
+  - "Each stage can be reached from the previous one without redesign"
+  - "Backup and restore are specified, not assumed"
+  - "Every cost figure states its source or is labelled an assumption"
+evidenceRequirements:
+  - "Cost figures cite evidence records"
+  - "Availability and recovery targets cite the requirement they come from"
+dependencies: []
+applicableRoles: [solution-architecture]
+suggestedTools: []
