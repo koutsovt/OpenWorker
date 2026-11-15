@@ -24,6 +24,8 @@ export interface AgentInstance {
   agent: AgentDefinition;
   user: string;
   skills: SkillDefinition[];
+  /** Set when the instance works on a task of an orchestrated run. */
+  run?: { runId: string; taskId: string };
 }
 
 export type ToolImplementation = (args: Record<string, Json>, instance: AgentInstance) => Promise<Json>;
@@ -46,6 +48,10 @@ export interface AgentRunRequest {
   skills?: string[];
   approver?: Approver;
   budget?: Budget;
+  /** The orchestrated run and task this instance belongs to. */
+  run?: { runId: string; taskId: string };
+  /** Called once, before the first tool call that is not a read, so the caller can record it durably. */
+  onSideEffect?: () => void;
 }
 
 export interface AgentRunOutcome {
@@ -55,6 +61,8 @@ export interface AgentRunOutcome {
   failure?: string;
   model: string;
   tried: string[];
+  /** True when the instance ran a tool that is not a read. Such a task must not be re-issued automatically. */
+  sideEffects: boolean;
 }
 
 interface Deps {
@@ -70,7 +78,7 @@ const short = (text: string) => createHash('sha256').update(text).digest('hex').
 
 export class Workforce {
   private readonly deps: Deps;
-  private readonly instances = new Map<string, { instance: AgentInstance; calls: Map<string, number>; sideEffects: boolean }>();
+  private readonly instances = new Map<string, { instance: AgentInstance; calls: Map<string, number>; sideEffects: boolean; onSideEffect?: () => void }>();
   private readonly loggedDenials = new Set<string>();
 
   constructor(deps: Deps) {
@@ -96,7 +104,10 @@ export class Workforce {
           return { error: `Call limit for ${definition.name} reached. Do not call it again.` };
         }
         entry.calls.set(definition.name, count);
-        if (definition.action !== 'read') entry.sideEffects = true;
+        if (definition.action !== 'read' && !entry.sideEffects) {
+          entry.sideEffects = true;
+          entry.onSideEffect?.();
+        }
         ledger.append('tool.called', `agent:${entry.instance.id}`, { tool: definition.name, action: definition.action, argsDigest: short(JSON.stringify(args)) });
         return this.deps.implementations[definition.name]!(args, entry.instance);
       },
@@ -139,12 +150,19 @@ export class Workforce {
       throw e;
     }
 
-    const instance: AgentInstance = { id: `${agent.id}@${agent.version}#${randomUUID().slice(0, 8)}`, agent, user: request.user, skills };
-    const entry = { instance, calls: new Map<string, number>(), sideEffects: false };
+    const instance: AgentInstance = {
+      id: `${agent.id}@${agent.version}#${randomUUID().slice(0, 8)}`, agent, user: request.user, skills,
+      ...(request.run ? { run: request.run } : {}),
+    };
+    const entry = {
+      instance, calls: new Map<string, number>(), sideEffects: false,
+      ...(request.onSideEffect ? { onSideEffect: request.onSideEffect } : {}),
+    };
     this.instances.set(instance.id, entry);
     ledger.append('agent.instantiated', actor, {
       instance: instance.id, agent: agent.id, version: agent.version, definitionDigest: agent.digest,
       skills: skills.map((s) => ({ id: s.id, version: s.version, digest: s.digest })),
+      run: request.run?.runId ?? null, task: request.run?.taskId ?? null,
     });
 
     const budget = new BudgetTracker(request.budget ?? {});
@@ -168,7 +186,7 @@ export class Workforce {
       const breach = outcome.result.failure?.category === 'timeout' ? 'time' : budget.exceeded();
       if (breach) ledger.append('budget.exceeded', actor, { instance: instance.id, limit: breach });
       return {
-        instance: instance.id, model: outcome.model, tried: outcome.tried,
+        instance: instance.id, model: outcome.model, tried: outcome.tried, sideEffects: entry.sideEffects,
         status: breach ? 'budget_exceeded' : outcome.result.status,
         output: breach ? null : outcome.result.output,
         ...(breach ? { failure: breach } : outcome.result.failure ? { failure: outcome.result.failure.category } : {}),

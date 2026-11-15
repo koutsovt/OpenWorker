@@ -1,0 +1,12 @@
+name: project.read
+description: Read the project memory of the current run - its objective, recorded decisions, results of completed tasks, open questions and the evidence gathered so far.
+owner: platform
+action: read
+risk: low
+dataClassification: internal
+limits:
+  maxCallsPerSession: 10
+inputSchema:
+  type: object
+  properties: {}
+  additionalProperties: false

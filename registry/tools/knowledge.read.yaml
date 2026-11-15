@@ -1,0 +1,15 @@
+name: knowledge.read
+description: Read one passage of a knowledge document in full. Records the retrieval as evidence and returns its evidence id, which is what you cite.
+owner: platform
+action: read
+risk: low
+dataClassification: internal
+limits:
+  maxCallsPerSession: 60
+inputSchema:
+  type: object
+  properties:
+    document: { type: string, description: Document path as returned by knowledge.search. }
+    anchor: { type: string, description: 'Passage anchor as returned by knowledge.search, for example p3.' }
+  required: [document, anchor]
+  additionalProperties: false

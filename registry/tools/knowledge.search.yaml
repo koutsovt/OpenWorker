@@ -1,0 +1,15 @@
+name: knowledge.search
+description: Keyword search over the read-only enterprise knowledge documents. Returns matching passages by document and anchor, with a short snippet.
+owner: platform
+action: read
+risk: low
+dataClassification: internal
+limits:
+  maxCallsPerSession: 30
+inputSchema:
+  type: object
+  properties:
+    query: { type: string, description: Words to look for. Any word may match; passages matching more words rank higher. }
+    limit: { type: integer, minimum: 1, maximum: 20, description: Maximum number of passages. Defaults to 5. }
+  required: [query]
+  additionalProperties: false

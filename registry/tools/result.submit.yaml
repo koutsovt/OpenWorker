@@ -1,0 +1,15 @@
+name: result.submit
+description: Hand your structured result for this task back to the platform. Call it once your work is done; a later call replaces an earlier one.
+owner: platform
+# Classed as a read: it returns the task's own output to the platform and changes nothing outside the task.
+action: read
+risk: low
+dataClassification: internal
+limits:
+  maxCallsPerSession: 5
+inputSchema:
+  type: object
+  properties:
+    result: { type: object, description: The result as a JSON object, in the shape the task asked for. }
+  required: [result]
+  additionalProperties: false

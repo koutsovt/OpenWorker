@@ -204,6 +204,13 @@ export class Registry {
     return this.usable('skill', id, this.skills.get(id), (s) => `${s.id}@${s.version}`, this.lock.skills);
   }
 
+  /** Every agent that can be instantiated right now: approved and matching the lock. */
+  usableAgents(): AgentDefinition[] {
+    return [...this.agents.keys()].sort().flatMap((id) => {
+      try { return [this.agent(id)]; } catch { return []; }
+    });
+  }
+
   /** Skills an agent may be given, as a catalogue for planning. */
   eligibleSkills(agent: AgentDefinition): SkillDefinition[] {
     return agent.eligibleSkills.flatMap((id) => {

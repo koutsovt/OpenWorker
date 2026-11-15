@@ -1,0 +1,14 @@
+name: evidence.get
+description: Look up an evidence record by id - which document and passage it came from, who retrieved it and when, and the passage text if the source is unchanged.
+owner: platform
+action: read
+risk: low
+dataClassification: internal
+limits:
+  maxCallsPerSession: 60
+inputSchema:
+  type: object
+  properties:
+    id: { type: string, description: 'Evidence id, for example ev-12.' }
+  required: [id]
+  additionalProperties: false

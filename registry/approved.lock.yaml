@@ -1,5 +1,6 @@
 # Digests of approved agent and skill definitions. Changed only by reviewed pull request.
 agents:
   assurance@1: e24f2f406a9fc06989052f7946038ad2f44d32cd6c0e59aab92d187f967cbc34
+  orchestrator@1: 95e8c7db50abd3ec98797c4282712e08c82e23af548f9801eb8cdb8bfd05957f
 skills:
   evidence-verification@1.0.0: a344b3b83ce446647cea847ba26a8e67e3bd1c29192e2f1ae780e067a181fe9f
