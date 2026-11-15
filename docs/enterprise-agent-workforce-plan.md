@@ -1,6 +1,6 @@
 # Enterprise Agent Workforce — Architecture Assessment and Implementation Plan
 
-Status: **plan approved 15 Nov 2026. M0 to M4 are built; M5 (hardening) is next. M3 and M4 are verified with a scripted model only, not yet with real providers.** See the README for current state.
+Status: **plan approved 15 Nov 2026. M0 to M5 are built. M3 to M5 are verified with a scripted model on every engine, including the real OpenWorker runtime, but not yet with real providers.** Decisions are recorded in `docs/adr/`. See the README for current state.
 Source inspected: `andrewyng/openworker` at commit `ecb4454` (13 Nov 2026), read-only clone.
 npm registry checked the same day: `@openworkerai/harness-sdk` **0.1.0-beta.4** (client), native runtime **0.1.0-beta.3**.
 

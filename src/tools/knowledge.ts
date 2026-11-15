@@ -2,6 +2,7 @@
 // Reading a passage creates an evidence record, so every citation an agent makes
 // can be traced to what it actually retrieved. None of these tools changes a source.
 import type { AuditLedger } from '../audit/ledger.ts';
+import { screen } from '../governance/injection.ts';
 import type { Json } from '../harness/port.ts';
 import type { KnowledgeBase } from '../memory/knowledge.ts';
 import type { EvidenceStore, ProjectMemory } from '../memory/state.ts';
@@ -15,12 +16,25 @@ const runOf = (instance: AgentInstance): string => instance.run?.runId ?? 'adhoc
 export function knowledgeTools(
   knowledge: KnowledgeBase, evidence: EvidenceStore, project: ProjectMemory, ledger: AuditLedger,
 ): Record<string, ToolImplementation> {
+  // Text that reads as an instruction is removed before an agent sees it, and recorded once per passage and run.
+  const logged = new Set<string>();
+  const safe = (text: string, document: string, anchor: string, instance: AgentInstance): string => {
+    const screened = screen(text);
+    const key = `${runOf(instance)}|${document}|${anchor}`;
+    if (screened.flags.length && !logged.has(key)) {
+      logged.add(key);
+      ledger.append('injection.flagged', `agent:${instance.id}`, { run: runOf(instance), source: 'document', document, anchor, patterns: screened.flags });
+    }
+    return screened.text;
+  };
   return {
-    'knowledge.search': async (args): Promise<Json> => {
+    'knowledge.search': async (args, instance): Promise<Json> => {
       const hits = knowledge.search(String(args.query ?? ''), typeof args.limit === 'number' ? args.limit : 5);
       return {
         notice: UNTRUSTED,
-        hits: hits.map((h) => ({ document: h.document, anchor: h.anchor, heading: h.heading, snippet: h.snippet })),
+        hits: hits.map((h) => ({
+          document: h.document, anchor: h.anchor, heading: safe(h.heading, h.document, h.anchor, instance), snippet: safe(h.snippet, h.document, h.anchor, instance),
+        })),
         next: 'Snippets are not citable. Call knowledge.read with a document and anchor to read a passage and get its evidence id.',
       };
     },
@@ -36,7 +50,10 @@ export function knowledgeTools(
           evidence: record.id, run: record.runId, document: record.document, anchor: record.anchor, contentHash: record.contentHash,
         });
       }
-      return { notice: UNTRUSTED, evidenceId: record.id, document: passage.document, anchor: passage.anchor, heading: passage.heading, content: passage.text };
+      return {
+        notice: UNTRUSTED, evidenceId: record.id, document: passage.document, anchor: passage.anchor,
+        heading: safe(passage.heading, passage.document, passage.anchor, instance), content: safe(passage.text, passage.document, passage.anchor, instance),
+      };
     },
 
     'evidence.get': async (args, instance): Promise<Json> => {
@@ -48,7 +65,7 @@ export function knowledgeTools(
       return {
         notice: UNTRUSTED, evidenceId: record.id, document: record.document, anchor: record.anchor, contentHash: record.contentHash,
         retrievedBy: record.retrievedBy, retrievedAt: record.retrievedAt, sourceUnchanged: unchanged,
-        content: unchanged ? passage!.text : null,
+        content: unchanged ? safe(passage!.text, record.document, record.anchor, instance) : null,
       };
     },
 

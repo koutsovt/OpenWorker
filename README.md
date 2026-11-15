@@ -8,8 +8,8 @@ SDK validation results: [spikes/m0/RESULTS.md](spikes/m0/RESULTS.md).
 
 ## Status
 
-Milestones 1 to 4 are in place: skeleton, registries and governance, orchestration, and the proof-of-concept scenario.
-**The scenario has run end to end only with a scripted model in the tests; it has not yet run against real models.**
+All five planned milestones are in place: skeleton, registries and governance, orchestration, the proof-of-concept scenario, and hardening.
+**The scenario runs end to end on every engine, including the real OpenWorker runtime, but only with a scripted model behind it. It has not yet run against real models.**
 
 | Part | Where | State |
 |---|---|---|
@@ -31,7 +31,10 @@ Milestones 1 to 4 are in place: skeleton, registries and governance, orchestrati
 | Six agents, seven skills | `registry/` | Written and locked. **Review them: the lock is your approval** |
 | Assurance, rework, fail gate, final report | `src/orchestrator/orchestrator.ts`, `report.ts` | Done on the fake engine |
 | Scenario knowledge pack (simulated) | `scenarios/research-ethics-eforms/` | Done |
-| Hardening: injection test set, cost report, deployment decisions | — | Not started (milestone 5) |
+| Prompt-injection screen and test set | `src/governance/injection.ts`, `scenarios/injection-set/` | Done; three techniques are known to get past the screen and are stopped by other controls |
+| Harness swap test | `tests/harness-swap.test.ts` | Done: same scenario, same outcome on the fake, the Claude Code adapter, the real OpenWorker runtime, and both routed |
+| Cost and usage report | `src/audit/usage.ts` | Done; cost shows as unknown until prices are set |
+| Architecture decision records | `docs/adr/` | Written. Hosted deployment is a design only; no container has been built |
 
 ## Run it locally
 
@@ -143,6 +146,28 @@ What happens to a task when things go wrong:
 | A dependency did not complete | Task marked `blocked`; unrelated tasks still run |
 
 A re-issued task starts a new session, so read-only tool calls it made before the kill are made again.
+
+## Cost and usage
+
+```bash
+npm run usage
+```
+
+```bash
+npm run usage -- <run-id>
+```
+
+Totals come from the audit ledger: by model and by run, or by task for one run. A session with no price or with
+incomplete usage is counted as unpriced, never as zero. Claude through Claude Code is on a subscription, so its
+figures are marked notional. To get cost figures, add `price: { input, output }` (USD per million tokens, from the
+provider's current price list) to each model in `config/models.yaml`.
+
+## Prompt injection
+
+Text returned by the knowledge tools, and results passed from one agent to another, are screened: a sentence that
+reads as an instruction to the reader is removed, recorded in the ledger and listed in the run's report.
+The screen is a pattern list and is one layer of several; see [ADR 8](docs/adr/0008-layered-prompt-injection-defences.md)
+and [the injection test set](scenarios/injection-set/README.md), which says exactly what gets past it.
 
 ## Knowledge and evidence
 

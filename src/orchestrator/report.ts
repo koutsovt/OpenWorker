@@ -58,6 +58,10 @@ export function renderReport(input: ReportInput): string {
     if (r.type === 'assurance.overridden' && d.run === run.id) return [`${r.at} — assurance verdict overridden by ${r.actor}: ${String(d.reason)}`];
     return [];
   });
+  const injections = ledger.filter((r) => r.type === 'injection.flagged' && data(r).run === run.id).map((r) => {
+    const d = data(r);
+    return [d.source === 'document' ? `${String(d.document)} ${String(d.anchor)}` : `result of task ${String(d.task)}`, (d.patterns as string[]).join(', '), r.actor];
+  });
   const seqs = ledger.filter((r) => data(r).run === run.id || instances.has(String(data(r).instance))).map((r) => r.seq);
 
   const lines = [
@@ -90,6 +94,10 @@ export function renderReport(input: ReportInput): string {
       : '_No evidence was retrieved._',
     '',
     'Every evidence id cited in a task result or in this report was checked against this register before the result was accepted.',
+    '', '## Suspected prompt injection', '',
+    injections.length
+      ? `Text that reads as an instruction to the reader was found and removed before any agent saw it. Treat these sources with suspicion.\n\n${table(['Source', 'Patterns matched', 'Seen by'], injections)}`
+      : '_None detected. Detection is by pattern and can miss things; the other controls do not depend on it._',
     '', '## How the work was done', '',
     table(['Task', 'Agent', 'Stage', 'Models tried', 'Attempts', 'Tokens in / out', 'Cost (USD)'], tasks.map((t) => {
       const u = usage.get(t.id);

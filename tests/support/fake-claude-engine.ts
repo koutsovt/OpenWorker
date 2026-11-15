@@ -2,15 +2,15 @@
 // It follows the SDK's documented order: PreToolUse hooks, then canUseTool, then the tool handler.
 import { randomUUID } from 'node:crypto';
 import type { ClaudeCodeEngine, EngineMessage, ToolHandler } from '../../src/harness/claude-code.ts';
-import { scenario } from './scenarios.ts';
+import { scenario, type Step } from './scenarios.ts';
 
 interface FakeTool { name: string; handler: ToolHandler }
 
-export function fakeClaudeEngine(): ClaudeCodeEngine {
+export function fakeClaudeEngine(script: (model: string, toolResults: number, input: string) => Step = scenario): ClaudeCodeEngine {
   return {
     tool: (name, _description, _shape, handler) => ({ name, handler }),
     createSdkMcpServer: (options) => ({ name: options.name, tools: options.tools }),
-    async *query({ options }): AsyncIterable<EngineMessage> {
+    async *query({ prompt, options }): AsyncIterable<EngineMessage> {
       const sessionId = options.resume ?? randomUUID();
       const tools = new Map<string, FakeTool>(Object.entries(options.mcpServers).flatMap(([server, value]) =>
         ((value as { tools: FakeTool[] }).tools).map((t) => [`mcp__${server}__${t.name}`, t] as const)));
@@ -20,7 +20,7 @@ export function fakeClaudeEngine(): ClaudeCodeEngine {
       const usage = () => ({ input_tokens: 100 * turns, output_tokens: 20 * turns });
       while (true) {
         if (options.abortController.signal.aborted) throw new Error('aborted');
-        const step = scenario(options.model ?? 'default', toolResults);
+        const step = script(options.model ?? 'default', toolResults, prompt);
         turns++;
         if ('error' in step) {
           yield { type: 'assistant', session_id: sessionId, error: step.error };

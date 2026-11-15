@@ -3,6 +3,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AuditLedger } from '../audit/ledger.ts';
+import { formatUsage, usageReport } from '../audit/usage.ts';
 import { loadConfig } from '../config/load.ts';
 import { ModelGateway } from '../gateway/gateway.ts';
 import { runTask } from '../gateway/run.ts';
@@ -213,10 +214,20 @@ if (command === 'verify-ledger') {
   } finally {
     await harness.shutdown();
   }
+} else if (command === 'usage') {
+  // usage [run-id]: tokens and cost from the audit ledger, by model and by run, or by task for one run.
+  const config = loadConfig(configDir);
+  const usage = usageReport(ledger.records(), rest[0] ? { runId: rest[0] } : {});
+  const subscription = new Set(config.models.filter((m) => config.providers.find((p) => p.name === m.provider)?.api === 'claude-code').map((m) => m.alias));
+  const unpriced = config.models.filter((m) => !m.price).map((m) => m.alias);
+  console.log(formatUsage('model', usage.byModel, (alias) => (subscription.has(alias) ? 'subscription: rate-limited, not billed per token' : '')));
+  console.log(`\n${formatUsage(usage.byTask ? 'task' : 'run', usage.byTask ?? usage.byRun)}`);
+  console.log(`\n${formatUsage('', [usage.total])}`);
+  if (unpriced.length) console.log(`\nNo price is set for: ${unpriced.join(', ')}. Add price: { input, output } (USD per million tokens) in config/models.yaml to get cost figures.`);
 } else if (command === 'runs') {
   const store = new RunStore(openState(resolve(stateDir, 'state.sqlite')));
   for (const run of store.runs()) console.log(`${run.id}  ${run.status.padEnd(9)}  ${run.createdAt}  ${run.user}  ${run.objective.slice(0, 80)}`);
 } else {
-  console.error('Commands: orchestrate [--scenario dir] [--plan file] [objective] | resume <run-id> | runs | run <agent-id> [--skills a,b] <task> | ask <model-policy> <question> | registry check|lock | verify-ledger');
+  console.error('Commands: orchestrate [--scenario dir] [--plan file] [objective] | resume <run-id> | runs | usage [run-id] | run <agent-id> [--skills a,b] <task> | ask <model-policy> <question> | registry check|lock | verify-ledger');
   process.exit(2);
 }

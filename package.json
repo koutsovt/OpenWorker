@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "orchestrate": "node --disable-warning=ExperimentalWarning src/cli/main.ts orchestrate",
     "resume": "node --disable-warning=ExperimentalWarning src/cli/main.ts resume",
+    "usage": "node --disable-warning=ExperimentalWarning src/cli/main.ts usage",
     "runs": "node --disable-warning=ExperimentalWarning src/cli/main.ts runs",
     "agent": "node --disable-warning=ExperimentalWarning src/cli/main.ts run",
     "registry": "node --disable-warning=ExperimentalWarning src/cli/main.ts registry",

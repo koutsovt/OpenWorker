@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AuditLedger } from '../audit/ledger.ts';
 import type { Budget } from '../governance/budget.ts';
+import { screenJson } from '../governance/injection.ts';
 import type { Governance } from '../governance/policy.ts';
 import type { Json } from '../harness/port.ts';
 import type { EvidenceStore, ProjectMemory } from '../memory/state.ts';
@@ -71,6 +72,7 @@ const unfinished: TaskStatus[] = ['failed', 'blocked', 'needs_attention'];
 
 export class Orchestrator {
   private readonly deps: Deps;
+  private readonly flagged = new Set<string>();
   private readonly options: Required<Omit<OrchestratorOptions, 'budget' | 'reportsDir'>> & { budget: Budget; reportsDir: string | undefined };
 
   constructor(deps: Deps, options: OrchestratorOptions = {}) {
@@ -374,7 +376,15 @@ export class Orchestrator {
       const wantsResult = agent.allowedTools.includes(RESULT_TOOL);
       const contract = contractFor(task, agent.outputContract);
       const reviewable = new Set(all.map((t) => t.id).filter((id) => !id.startsWith(STAGE.assurance) && id !== STAGE.report));
-      const upstream = all.filter((t) => task.dependsOn.includes(t.id));
+      // Another agent's result is data. Anything in it that reads as an instruction is removed before it is passed on.
+      const upstream = all.filter((t) => task.dependsOn.includes(t.id)).map((t) => {
+        const screened = screenJson(t.result);
+        if (screened.flags.length && !this.flagged.has(`${run.id}|${t.id}`)) {
+          this.flagged.add(`${run.id}|${t.id}`);
+          ledger.append('injection.flagged', 'system', { run: run.id, source: 'task-result', task: t.id, patterns: screened.flags });
+        }
+        return { ...t, result: screened.value };
+      });
       let previous: string | undefined;
       for (let attempt = 1; ; attempt++) {
         store.startAttempt(run.id, task.id);
