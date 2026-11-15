@@ -3,7 +3,7 @@
 // (OpenWorker) serve the same platform at once.
 import {
   HarnessError,
-  type AgentHarness, type AgentSession, type AgentSpec, type HarnessSetup, type ModelRef, type ProviderSpec,
+  type AgentHarness, type AgentSession, type AgentSpec, type HarnessSetup, type ProviderSpec, type SessionOptions,
 } from './port.ts';
 
 export interface Route {
@@ -40,7 +40,7 @@ export class RoutingHarness implements AgentHarness {
     this.byAgent.set(spec.name, harness);
   }
 
-  async startSession(agent: string, options: { model?: ModelRef } = {}): Promise<AgentSession> {
+  async startSession(agent: string, options: SessionOptions = {}): Promise<AgentSession> {
     const harness = this.agentEngine(agent);
     // An agent is bound to its engine; switching engines means a different definition.
     if (options.model && this.engineFor(options.model.provider) !== harness)
@@ -48,8 +48,8 @@ export class RoutingHarness implements AgentHarness {
     return harness.startSession(agent, options);
   }
 
-  resumeSession(agent: string, reference: string): Promise<AgentSession> {
-    return this.agentEngine(agent).resumeSession(agent, reference);
+  resumeSession(agent: string, reference: string, options: { tag?: string } = {}): Promise<AgentSession> {
+    return this.agentEngine(agent).resumeSession(agent, reference, options);
   }
 
   async shutdown(): Promise<void> {

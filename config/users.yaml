@@ -1,0 +1,4 @@
+# Local users for the proof of concept. Replaced by an identity provider later.
+users:
+  - id: local
+    roles: [requester, approver]

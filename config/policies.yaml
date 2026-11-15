@@ -1,0 +1,11 @@
+# What each role may do. Agents are not users: they hold no role and cannot approve anything.
+roles:
+  requester:
+    run: true
+    actions: [read]
+  contributor:
+    actions: [read, write]
+  approver:
+    approve: true
+  registry-admin: {}
+  auditor: {}

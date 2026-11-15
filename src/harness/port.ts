@@ -20,6 +20,8 @@ export interface ModelRef {
 export interface ToolCallContext {
   sessionId: string;
   callId: string;
+  /** The tag given when the session was started; identifies the platform's agent instance. */
+  tag: string;
 }
 
 export interface ToolSpec {
@@ -35,6 +37,8 @@ export type PolicyDecision = { allow: true } | { allow: false; code: string; fee
 /** Must be pure and repeatable: engines may evaluate it more than once per call. */
 export type PolicyCheck = (call: {
   sessionId: string;
+  /** The tag given when the session was started. */
+  tag: string;
   tool: string;
   arguments: Json;
 }) => PolicyDecision | Promise<PolicyDecision>;
@@ -94,6 +98,12 @@ export interface AgentSession {
   cancel(): Promise<void>;
 }
 
+export interface SessionOptions {
+  model?: ModelRef;
+  /** Opaque label passed back to the policy check and to tools for every call in this session. */
+  tag?: string;
+}
+
 export interface HarnessSetup {
   providers: ProviderSpec[];
   tools: ToolSpec[];
@@ -103,8 +113,8 @@ export interface HarnessSetup {
 export interface AgentHarness {
   start(setup: HarnessSetup): Promise<void>;
   defineAgent(spec: AgentSpec): Promise<void>;
-  startSession(agent: string, options?: { model?: ModelRef }): Promise<AgentSession>;
-  resumeSession(agent: string, reference: string): Promise<AgentSession>;
+  startSession(agent: string, options?: SessionOptions): Promise<AgentSession>;
+  resumeSession(agent: string, reference: string, options?: { tag?: string }): Promise<AgentSession>;
   shutdown(): Promise<void>;
 }
 

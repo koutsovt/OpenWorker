@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import {
   HarnessError, emptyUsage,
   type AgentHarness, type AgentSession, type AgentSpec, type ApprovalRequest, type HarnessSetup, type Json,
-  type ModelRef, type PolicyCheck, type ToolSpec, type TurnOptions, type TurnResult, type Usage,
+  type ModelRef, type PolicyCheck, type SessionOptions, type ToolSpec, type TurnOptions, type TurnResult, type Usage,
 } from './port.ts';
 
 export type FakeStep =
@@ -23,6 +23,7 @@ interface SessionState {
   usage: Usage;
   pending?: { request: ApprovalRequest; decision?: 'approve' | 'deny' };
   cancelled: boolean;
+  tag: string;
 }
 
 export class FakeHarness implements AgentHarness {
@@ -54,21 +55,22 @@ export class FakeHarness implements AgentHarness {
     this.agents.set(spec.name, structuredClone(spec));
   }
 
-  async startSession(agent: string, options: { model?: ModelRef } = {}): Promise<AgentSession> {
+  async startSession(agent: string, options: SessionOptions = {}): Promise<AgentSession> {
     const spec = this.agents.get(agent);
     if (!spec) throw new HarnessError('unknown_agent', `Unknown agent ${agent}`);
     const model = options.model ?? spec.model;
     if (!this.providers.has(model.provider)) throw new HarnessError('unknown_provider', `Unknown provider ${model.provider}`);
     const state: SessionState = {
-      id: randomUUID(), agent: spec, model, toolResults: 0, input: '', options: {}, usage: emptyUsage(), cancelled: false,
+      id: randomUUID(), agent: spec, model, toolResults: 0, input: '', options: {}, usage: emptyUsage(), cancelled: false, tag: options.tag ?? '',
     };
     this.sessions.set(state.id, state);
     return this.handle(state);
   }
 
-  async resumeSession(agent: string, reference: string): Promise<AgentSession> {
+  async resumeSession(agent: string, reference: string, options: { tag?: string } = {}): Promise<AgentSession> {
     const state = this.sessions.get(reference);
     if (!state || state.agent.name !== agent) throw new HarnessError('invalid_state', 'Unknown session reference');
+    if (options.tag !== undefined) state.tag = options.tag;
     return this.handle(state);
   }
 
@@ -104,7 +106,7 @@ export class FakeHarness implements AgentHarness {
   }
 
   private async execute(state: SessionState, tool: string, args: Json, callId: string): Promise<void> {
-    await this.tools.get(tool)!.execute(args as Record<string, Json>, { sessionId: state.id, callId });
+    await this.tools.get(tool)!.execute(args as Record<string, Json>, { sessionId: state.id, callId, tag: state.tag });
   }
 
   private async loop(state: SessionState): Promise<TurnResult> {
@@ -125,7 +127,7 @@ export class FakeHarness implements AgentHarness {
       // A tool outside the definition is rejected without running; the model is told and continues.
       if (state.agent.tools.includes(step.tool)) {
         const decision = this.policy
-          ? await this.policy({ sessionId: state.id, tool: step.tool, arguments: step.args })
+          ? await this.policy({ sessionId: state.id, tag: state.tag, tool: step.tool, arguments: step.args })
           : ({ allow: true } as const);
         if (decision.allow) {
           if (state.agent.approvalRequired?.includes(step.tool)) {

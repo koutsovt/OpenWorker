@@ -6,7 +6,7 @@ import { z } from 'zod';
 import {
   HarnessError, emptyUsage,
   type AgentHarness, type AgentSession, type AgentSpec, type ApprovalRequest, type HarnessSetup, type Json, type ModelRef,
-  type PolicyCheck, type ToolSpec, type TurnOptions, type TurnResult, type Usage,
+  type PolicyCheck, type SessionOptions, type ToolSpec, type TurnOptions, type TurnResult, type Usage,
 } from './port.ts';
 
 const SERVER = 'platform';
@@ -109,23 +109,23 @@ export class ClaudeCodeHarness implements AgentHarness {
     this.agents.set(spec.name, structuredClone(spec));
   }
 
-  async startSession(agent: string, options: { model?: ModelRef } = {}): Promise<AgentSession> {
+  async startSession(agent: string, options: SessionOptions = {}): Promise<AgentSession> {
     const spec = this.agent(agent);
     if (options.model) this.requireProvider(options.model.provider);
-    return this.session(spec, options.model ?? spec.model, undefined);
+    return this.session(spec, options.model ?? spec.model, undefined, options.tag ?? '');
   }
 
-  async resumeSession(agent: string, reference: string): Promise<AgentSession> {
+  async resumeSession(agent: string, reference: string, options: { tag?: string } = {}): Promise<AgentSession> {
     const spec = this.agent(agent);
     const saved = JSON.parse(reference) as { sessionId: string; model: ModelRef };
-    return this.session(spec, saved.model, saved.sessionId);
+    return this.session(spec, saved.model, saved.sessionId, options.tag ?? '');
   }
 
   async shutdown(): Promise<void> {}
 
-  private session(spec: AgentSpec, model: ModelRef, sessionId: string | undefined): ClaudeCodeSession {
+  private session(spec: AgentSpec, model: ModelRef, sessionId: string | undefined, tag: string): ClaudeCodeSession {
     return new ClaudeCodeSession({
-      engine: this.engine, spec, model, sessionId, policy: this.policy, cwd: this.options.cwd,
+      engine: this.engine, spec, model, sessionId, tag, policy: this.policy, cwd: this.options.cwd,
       tools: spec.tools.map((name) => this.tools.get(name)!),
       onInit: (init) => { this.lastInit = init; },
     });
@@ -147,6 +147,7 @@ interface SessionDeps {
   spec: AgentSpec;
   model: ModelRef;
   sessionId: string | undefined;
+  tag: string;
   policy: PolicyCheck | undefined;
   cwd: string | undefined;
   tools: ToolSpec[];
@@ -220,7 +221,7 @@ class ClaudeCodeSession implements AgentSession {
     const qualified = spec.tools.find((name) => mcpName(name) === toolName);
     if (!qualified) return { allow: false, message: `Tool ${toolName} is not available to this agent.` };
     const decision = this.deps.policy
-      ? await this.deps.policy({ sessionId: this.sessionId ?? '', tool: qualified, arguments: input as Json })
+      ? await this.deps.policy({ sessionId: this.sessionId ?? '', tag: this.deps.tag, tool: qualified, arguments: input as Json })
       : ({ allow: true } as const);
     if (!decision.allow) return { allow: false, message: decision.feedback ?? `Denied by policy (${decision.code}).` };
     return { allow: true, qualified };
@@ -231,7 +232,7 @@ class ClaudeCodeSession implements AgentSession {
     const server = engine.createSdkMcpServer({
       name: SERVER, version: '1.0.0', alwaysLoad: true,
       tools: this.deps.tools.map((t) => engine.tool(localName(t.name), t.description, zodShape(t.inputSchema), async (args) => {
-        const result = await t.execute(args as Record<string, Json>, { sessionId: this.sessionId ?? '', callId: '' });
+        const result = await t.execute(args as Record<string, Json>, { sessionId: this.sessionId ?? '', callId: '', tag: this.deps.tag });
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       })),
     });

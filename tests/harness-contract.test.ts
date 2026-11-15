@@ -21,8 +21,10 @@ function contract(name: string, make: () => Promise<{ harness: AgentHarness; bas
     let harness: AgentHarness;
     let cleanup: () => void;
     const ran = { lookup: 0, forbidden: 0, sensitive: 0, submitted: [] as Json[] };
+    const tags = { policy: new Set<string>(), tool: new Set<string>() };
     const tool = (toolName: string, schema: Json, run: (args: Record<string, Json>) => Json): ToolSpec =>
-      ({ name: toolName, description: `Test tool ${toolName}.`, inputSchema: schema, execute: async (args) => run(args) });
+      ({ name: toolName, description: `Test tool ${toolName}.`, inputSchema: schema,
+        execute: async (args, context) => { tags.tool.add(context.tag); return run(args); } });
     const tools = [
       tool('app.lookup', object({ q: { type: 'string' } }, ['q']), () => { ran.lookup++; return { hits: ['doc-1#p3'] }; }),
       tool('app.forbidden', object({ target: { type: 'string' } }, ['target']), () => { ran.forbidden++; return { done: true }; }),
@@ -43,7 +45,7 @@ function contract(name: string, make: () => Promise<{ harness: AgentHarness; bas
           ? { name: 'Mock', api: made.api }
           : { name: 'Mock', api: 'chat-completions', apiKeyEnv: 'MOCK_KEY', ...(made.baseUrl ? { baseUrl: made.baseUrl } : {}) }],
         tools,
-        policy: ({ tool: t }) => (t === 'app.forbidden' ? { allow: false, code: 'POLICY_DENY', feedback: 'Not permitted.' } : { allow: true }),
+        policy: ({ tool: t, tag }) => (tags.policy.add(tag), t === 'app.forbidden') ? { allow: false, code: 'POLICY_DENY', feedback: 'Not permitted.' } : { allow: true },
       });
     });
     after(async () => { await harness.shutdown(); cleanup(); });
@@ -60,8 +62,10 @@ function contract(name: string, make: () => Promise<{ harness: AgentHarness; bas
 
     it('runs allowed tools and blocks a tool the policy denies', async () => {
       await harness.defineAgent(agent('tools-v1', 'mock-tools', { tools: ['app.lookup', 'app.forbidden', 'app.submit_result'] }));
-      const result = await (await harness.startSession('tools-v1')).run('assess');
+      const result = await (await harness.startSession('tools-v1', { tag: 'instance-42' })).run('assess');
       assert.equal(result.status, 'completed');
+      assert.ok(tags.policy.has('instance-42'), 'policy check receives the session tag');
+      assert.ok(tags.tool.has('instance-42'), 'tools receive the session tag');
       assert.equal(ran.lookup, 1);
       assert.equal(ran.forbidden, 0);
       assert.deepEqual(ran.submitted, [{ verdict: 'pass', findings: ['ok'] }]);

@@ -9,6 +9,8 @@
   "scripts": {
     "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 'tests/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
+    "agent": "node --disable-warning=ExperimentalWarning src/cli/main.ts run",
+    "registry": "node --disable-warning=ExperimentalWarning src/cli/main.ts registry",
     "ask": "node --disable-warning=ExperimentalWarning src/cli/main.ts ask",
     "verify-ledger": "node --disable-warning=ExperimentalWarning src/cli/main.ts verify-ledger"
   },

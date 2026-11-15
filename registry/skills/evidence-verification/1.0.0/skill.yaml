@@ -1,0 +1,22 @@
+id: evidence-verification
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Check that each material claim in a piece of work is supported by cited evidence.
+scope: Any analysis, recommendation or report that makes factual or evaluative claims. Not a review of writing style.
+inputs:
+  - The work under review
+  - The evidence records it cites
+outputs:
+  - A list of claims, each marked supported, partly supported, unsupported or contradicted
+  - For each claim that is not fully supported, what evidence would settle it
+qualityCriteria:
+  - Every material claim is listed; none is skipped because it sounds plausible
+  - Each verdict names the specific evidence relied on
+  - Inference is distinguished from what the evidence states
+evidenceRequirements:
+  - Evidence is identified by record id and passage
+  - A claim with no cited evidence is marked unsupported, whatever its plausibility
+dependencies: []
+applicableRoles: [assurance, research]
+suggestedTools: []

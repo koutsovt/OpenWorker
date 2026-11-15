@@ -2,7 +2,7 @@
 import { Harness, hook, type AgentHandle, type Interruption, type RunStream, type Session } from '@openworkerai/harness-sdk';
 import {
   HarnessError, emptyUsage,
-  type AgentHarness, type AgentSession, type AgentSpec, type HarnessSetup, type Json, type ModelRef, type TurnOptions,
+  type AgentHarness, type AgentSession, type AgentSpec, type HarnessSetup, type Json, type ModelRef, type SessionOptions, type TurnOptions,
   type TurnResult, type Usage,
 } from './port.ts';
 
@@ -19,6 +19,7 @@ export class OpenWorkerHarness implements AgentHarness {
   private readonly agents = new Map<string, { spec: AgentSpec; handle: AgentHandle }>();
   private toolNames = new Set<string>();
   private providerNames = new Set<string>();
+  private readonly tags = new Map<string, string>();
 
   constructor(options: OpenWorkerOptions) {
     this.options = options;
@@ -37,7 +38,9 @@ export class OpenWorkerHarness implements AgentHarness {
             name: 'platform-policy',
             tools: [...this.toolNames],
             run: async (ctx) => {
-              const decision = await policy({ sessionId: ctx.sessionId, tool: String(ctx.tool), arguments: ctx.arguments });
+              const decision = await policy({
+                sessionId: ctx.sessionId, tag: this.tags.get(ctx.sessionId) ?? '', tool: String(ctx.tool), arguments: ctx.arguments,
+              });
               return decision.allow
                 ? { action: 'allow' }
                 : { action: 'block', code: decision.code, ...(decision.feedback ? { feedbackToModel: decision.feedback } : {}) };
@@ -67,7 +70,7 @@ export class OpenWorkerHarness implements AgentHarness {
           description: t.description,
           inputSchema: t.inputSchema,
           execute: (args: Record<string, Json>, ctx: { sessionId: string; callId: string }) =>
-            t.execute(args, { sessionId: ctx.sessionId, callId: ctx.callId }),
+            t.execute(args, { sessionId: ctx.sessionId, callId: ctx.callId, tag: this.tags.get(ctx.sessionId) ?? '' }),
         }])),
       });
     }
@@ -105,16 +108,19 @@ export class OpenWorkerHarness implements AgentHarness {
     this.agents.set(spec.name, { spec: structuredClone(spec), handle });
   }
 
-  async startSession(agent: string, options: { model?: ModelRef } = {}): Promise<AgentSession> {
+  async startSession(agent: string, options: SessionOptions = {}): Promise<AgentSession> {
     const entry = this.agent(agent);
     if (options.model) this.requireProvider(options.model.provider);
     const session = await entry.handle.newSession(
       options.model ? { model: { provider: options.model.provider, name: options.model.model } } : {});
+    this.tags.set(session.reference().session_id, options.tag ?? '');
     return new OpenWorkerSession(session, this.toolNames);
   }
 
-  async resumeSession(agent: string, reference: string): Promise<AgentSession> {
-    return new OpenWorkerSession(await this.agent(agent).handle.resumeSession(JSON.parse(reference)), this.toolNames);
+  async resumeSession(agent: string, reference: string, options: { tag?: string } = {}): Promise<AgentSession> {
+    const session = await this.agent(agent).handle.resumeSession(JSON.parse(reference));
+    if (options.tag !== undefined) this.tags.set(session.reference().session_id, options.tag);
+    return new OpenWorkerSession(session, this.toolNames);
   }
 
   async shutdown(): Promise<void> {

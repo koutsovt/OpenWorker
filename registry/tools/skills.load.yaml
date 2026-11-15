@@ -1,0 +1,14 @@
+name: skills.load
+description: Load the full method of a skill that has been assigned to you for this task.
+owner: platform
+action: read
+risk: low
+dataClassification: internal
+limits:
+  maxCallsPerSession: 10
+inputSchema:
+  type: object
+  properties:
+    id: { type: string, description: The id of an assigned skill. }
+  required: [id]
+  additionalProperties: false
