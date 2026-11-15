@@ -1,0 +1,21 @@
+{
+  "name": "openworker-agent-workforce",
+  "private": true,
+  "type": "module",
+  "description": "Enterprise agent workforce built on a replaceable agent harness",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 'tests/**/*.test.ts'",
+    "typecheck": "tsc --noEmit",
+    "ask": "node --disable-warning=ExperimentalWarning src/cli/main.ts ask",
+    "verify-ledger": "node --disable-warning=ExperimentalWarning src/cli/main.ts verify-ledger"
+  },
+  "dependencies": {
+    "@openworkerai/harness-sdk": "0.1.0-beta.4",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "~5.9.3"
+  }
+}

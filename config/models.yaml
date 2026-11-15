@@ -1,0 +1,20 @@
+# Logical model aliases. The exact provider model id comes from the environment
+# variable named in modelEnv, so ids are verified and set per deployment.
+# Add `price: { input: <USD per 1M>, output: <USD per 1M> }` from the provider's
+# current price list to enable cost figures; without it cost is reported as unknown.
+models:
+  - alias: openai-assurance
+    provider: OpenAI
+    modelEnv: OPENAI_ASSURANCE_MODEL
+    capabilities: [tools]
+  - alias: deepseek-fallback
+    provider: DeepSeek
+    modelEnv: DEEPSEEK_FALLBACK_MODEL
+    capabilities: [tools]
+
+policies:
+  # OpenAI runs the Assurance Agent; DeepSeek is fallback only.
+  - id: assurance
+    default: openai-assurance
+    allowed: [openai-assurance]
+    fallbacks: [deepseek-fallback]
