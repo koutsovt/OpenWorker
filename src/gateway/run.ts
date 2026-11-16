@@ -2,7 +2,7 @@
 // A fallback starts a fresh session on the next approved model; a session is
 // never switched mid-conversation, because engine state is bound to its provider.
 import type { AuditLedger } from '../audit/ledger.ts';
-import type { AgentHarness, AgentSpec, ApprovalRequest, TurnResult } from '../harness/port.ts';
+import type { AgentHarness, AgentSpec, ApprovalRequest, TurnResult, Usage } from '../harness/port.ts';
 import type { ModelGateway, Selection } from './gateway.ts';
 
 export interface TaskRequest {
@@ -28,12 +28,15 @@ export interface TaskOutcome {
   result: TurnResult;
   model: string;
   tried: string[];
+  /** Usage of every attempt, in order, including those that failed before a fallback. */
+  attempts: { model: string; usage: Usage }[];
 }
 
 export async function runTask(
   harness: AgentHarness, gateway: ModelGateway, ledger: AuditLedger, request: TaskRequest,
 ): Promise<TaskOutcome> {
   const tried: string[] = [];
+  const attempts: TaskOutcome['attempts'] = [];
   let selection: Selection | undefined = gateway.select(request.policy, request.actor);
   let last: TaskOutcome | undefined;
   while (selection) {
@@ -50,9 +53,14 @@ export async function runTask(
     let result: TurnResult;
     try {
       result = await session.run(request.input, request.addendum ? { addendum: request.addendum } : {});
-      while (result.status === 'needs_approval') {
-        for (const approval of result.approvals)
-          await session.respond(approval.id, request.approve ? await request.approve(approval) : 'deny');
+      // The time limit also covers waiting for a person: once it has passed, the turn is not resumed.
+      while (result.status === 'needs_approval' && !timedOut) {
+        for (const approval of result.approvals) {
+          const decision = request.approve ? await request.approve(approval) : 'deny';
+          if (timedOut) break;
+          await session.respond(approval.id, decision);
+        }
+        if (timedOut) break;
         result = await session.resume();
       }
     } finally {
@@ -64,14 +72,25 @@ export async function runTask(
     ledger.append('task.finished', request.actor, {
       agent: name, startedSeq: started.seq, status: result.status, failure: result.failure?.category ?? null,
     });
-    last = { result, model: selection.alias, tried: [...tried] };
+    attempts.push({ model: selection.alias, usage: result.usage });
+    last = { result, model: selection.alias, tried: [...tried], attempts: [...attempts] };
     // Fall back only on a retryable provider failure. Anything else needs a person or a fix.
     if (result.status !== 'failed' || !result.failure?.retryable) return last;
     if (request.mayFallBack && !request.mayFallBack()) {
       ledger.append('model.fallback_blocked', request.actor, { agent: name, reason: 'side_effects_already_made' });
       return last;
     }
-    selection = gateway.fallback(request.policy, tried, request.actor, result.failure.category);
+    try {
+      selection = gateway.fallback(request.policy, tried, request.actor, result.failure.category);
+      if (selection) {
+        const next = `${request.agent.name}--${selection.alias}`;
+        await harness.defineAgent({ ...request.agent, name: next, model: selection.ref });
+      }
+    } catch (e) {
+      // A fallback that cannot be set up (no model id, no key) must not hide the failure that caused it.
+      ledger.append('model.fallback_failed', request.actor, { agent: name, reason: (e as Error).message });
+      return last;
+    }
   }
   return last!;
 }

@@ -39,7 +39,7 @@ export function screen(text: string): Screened {
   return { text: flags.size ? cleaned.join('') : text, flags: [...flags] };
 }
 
-/** Screens every string inside a JSON value. */
+/** Screens every string inside a JSON value, object keys included: a key reaches the next agent as text too. */
 export function screenJson(value: Json): { value: Json; flags: string[] } {
   const flags = new Set<string>();
   const walk = (v: Json): Json => {
@@ -49,7 +49,18 @@ export function screenJson(value: Json): { value: Json; flags: string[] } {
       return screened.text;
     }
     if (Array.isArray(v)) return v.map(walk);
-    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, inner]) => [k, walk(inner)]));
+    if (v && typeof v === 'object') {
+      const out: Record<string, Json> = {};
+      for (const [k, inner] of Object.entries(v)) {
+        const key = screen(k);
+        key.flags.forEach((f) => flags.add(f));
+        // Removed keys are numbered so two of them cannot collide and drop a value.
+        let name = key.flags.length ? REMOVED : k;
+        for (let n = 2; name in out; n++) name = `${REMOVED} (${n})`;
+        out[name] = walk(inner);
+      }
+      return out;
+    }
     return v;
   };
   return { value: walk(value), flags: [...flags] };

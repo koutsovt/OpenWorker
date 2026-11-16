@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 import { AuditLedger } from '../src/audit/ledger.ts';
 import { validateConfig } from '../src/config/load.ts';
 import { ModelGateway } from '../src/gateway/gateway.ts';
+import { BudgetTracker } from '../src/governance/budget.ts';
 import { Governance } from '../src/governance/policy.ts';
 import { FakeHarness, type FakeStep } from '../src/harness/fake.ts';
 import type { Json } from '../src/harness/port.ts';
@@ -31,6 +32,7 @@ const fixture = () => ({
     agentFile('analyst', 1, { allowedTools: allTools, eligibleSkills: ['method-a', 'method-b'] }),
     agentFile('narrow', 1, { allowedTools: ['kb.read'] }),
     agentFile('drafty', 1, { status: 'draft' }),
+    agentFile('capped', 1, { allowedTools: ['kb.read'], limits: { maxModelCalls: 10, maxOutputTokens: 1000 } }),
   ],
 });
 
@@ -39,6 +41,7 @@ const users = [
   { id: 'bob', roles: ['requester'] },
   { id: 'carol', roles: ['approver'] },
   { id: 'dave', roles: ['requester', 'contributor'] },
+  { id: 'erin', roles: ['requester', 'contributor', 'approver'] },
 ];
 const roles = { requester: { run: true, actions: ['read' as const] }, contributor: { actions: ['read' as const, 'write' as const] }, approver: { approve: true } };
 const models = validateConfig({
@@ -229,6 +232,20 @@ describe('approval gates', () => {
     assert.equal((t.find('approval.denied')[0]!.data as { reason: string }).reason, 'no_approver_available');
   });
 
+  it('refuses an approver deciding on their own request', async () => {
+    const t = setup();
+    await t.run({ input: 'publish', user: 'erin', approver: approveAs('erin') });
+    assert.equal(t.ran['ops.publish'], undefined);
+    assert.equal((t.find('approval.rejected')[0]!.data as { code: string }).code, 'SELF_APPROVAL');
+  });
+
+  it('accepts another approver and marks the decision as not a self-approval', async () => {
+    const t = setup();
+    await t.run({ input: 'publish', user: 'erin', approver: approveAs('carol') });
+    assert.equal(t.ran['ops.publish'], 1);
+    assert.equal((t.find('approval.granted')[0]!.data as { selfApproval: boolean }).selfApproval, false);
+  });
+
   it('still applies the permission check before asking anyone', async () => {
     const t = setup();
     await t.run({ input: 'publish', user: 'alice', approver: approveAs('alice') });
@@ -306,6 +323,32 @@ describe('budgets and fallback', () => {
     const outcome = await t.run({ input: 'fail-first' });
     assert.equal(outcome.output, 'recovered on backup');
     assert.deepEqual(outcome.tried, ['primary', 'backup']);
+  });
+
+  it('charges the budget for the failed attempt as well as the fallback', async () => {
+    // One call on the primary (rate limited) and one on the backup: two in all, which reaches the limit.
+    const outcome = await setup().run({ input: 'fail-first', budget: { maxModelCalls: 2 } });
+    assert.deepEqual(outcome.tried, ['primary', 'backup']);
+    assert.equal(outcome.status, 'budget_exceeded');
+    assert.equal(outcome.failure, 'model_calls');
+  });
+
+  it('starts nothing once a shared budget is used up', async () => {
+    const t = setup();
+    const tracker = new BudgetTracker({ maxModelCalls: 2 });
+    assert.equal((await t.run({ input: 'read', tracker })).status, 'budget_exceeded');
+    const ranBefore = t.ran['kb.read'];
+    const second = await t.run({ input: 'read', tracker });
+    assert.equal(second.status, 'budget_exceeded');
+    assert.deepEqual(second.tried, []);
+    assert.equal(t.ran['kb.read'], ranBefore);
+    assert.equal((t.find('budget.exceeded').at(-1)!.data as { before?: string }).before, 'start');
+  });
+
+  it('caps the engine call limit at the calls left in the budget', async () => {
+    const t = setup();
+    await t.run({ agentId: 'capped', input: 'read-many', budget: { maxModelCalls: 2 } });
+    assert.equal((t.find('model.usage')[0]!.data as { modelCalls: number }).modelCalls, 2);
   });
 
   it('does not fall back once the task has written something', async () => {

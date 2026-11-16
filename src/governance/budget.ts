@@ -1,5 +1,7 @@
-// Run budget. Limits are checked before work starts and after every turn;
-// wall-clock time is enforced by cancelling the session.
+// Run budget. Limits are checked before a run starts and after it ends. Wall-clock time is
+// enforced by cancelling the session, and the remaining model-call budget caps the engine's
+// own call limit. Tokens and cost cannot be stopped mid-session, because the engines report
+// usage only at the end of a turn; a shared tracker stops further runs once they are spent.
 import type { Usage } from '../harness/port.ts';
 
 export interface Budget {

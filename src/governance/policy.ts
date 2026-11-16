@@ -20,12 +20,17 @@ export interface RolePermissions {
 
 export interface PolicyConfig {
   roles: Record<string, RolePermissions>;
+  /**
+   * Whether an approver may approve their own request: their own plan, a tool call in their own
+   * run, or an override of assurance on their own run. Off unless the policy file turns it on.
+   */
+  allowSelfApproval?: boolean;
 }
 
 export type Decision = { allow: true } | { allow: false; code: DenyCode; reason: string };
 export type DenyCode =
   | 'UNKNOWN_USER' | 'USER_MAY_NOT_RUN' | 'UNKNOWN_TOOL' | 'TOOL_NOT_IN_DEFINITION' | 'ACTION_NOT_PERMITTED'
-  | 'DATA_CLASSIFICATION' | 'UNKNOWN_INSTANCE' | 'NOT_AN_APPROVER';
+  | 'DATA_CLASSIFICATION' | 'UNKNOWN_INSTANCE' | 'NOT_AN_APPROVER' | 'SELF_APPROVAL';
 
 const deny = (code: DenyCode, reason: string): Decision => ({ allow: false, code, reason });
 const rank = (c: string) => CLASSIFICATIONS.indexOf(c as (typeof CLASSIFICATIONS)[number]);
@@ -42,7 +47,7 @@ export class Governance {
   static load(usersPath: string, policyPath: string): Governance {
     const users = (parse(readFileSync(usersPath, 'utf8')) as { users?: User[] }).users ?? [];
     const policy = parse(readFileSync(policyPath, 'utf8')) as PolicyConfig;
-    return new Governance(users, { roles: policy.roles ?? {} });
+    return new Governance(users, { roles: policy.roles ?? {}, allowSelfApproval: policy.allowSelfApproval === true });
   }
 
   private permissions(userId: string): RolePermissions[] | undefined {
@@ -56,11 +61,17 @@ export class Governance {
     return permissions.some((p) => p.run) ? { allow: true } : deny('USER_MAY_NOT_RUN', `User ${userId} has no role that may run agents`);
   }
 
-  /** May this person answer an approval request? Agents are never users, so they can never approve. */
-  mayApprove(userId: string): Decision {
+  /**
+   * May this person answer an approval request made on behalf of `requester`? Agents are never
+   * users, so they can never approve. Approving one's own request needs `allowSelfApproval`.
+   */
+  mayApprove(userId: string, requester?: string): Decision {
     const permissions = this.permissions(userId);
     if (!permissions) return deny('UNKNOWN_USER', `Unknown user ${userId}`);
-    return permissions.some((p) => p.approve) ? { allow: true } : deny('NOT_AN_APPROVER', `User ${userId} has no approver role`);
+    if (!permissions.some((p) => p.approve)) return deny('NOT_AN_APPROVER', `User ${userId} has no approver role`);
+    if (requester !== undefined && userId === requester && !this.policy.allowSelfApproval)
+      return deny('SELF_APPROVAL', `User ${userId} may not approve their own request; another approver must decide`);
+    return { allow: true };
   }
 
   /** May this agent, acting for this user, call this tool? Whether a human must also approve is the tool's risk class. */

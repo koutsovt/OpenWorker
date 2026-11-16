@@ -19,7 +19,10 @@ describe('audit ledger', () => {
     ledger.close();
     const reopened = new AuditLedger(path);
     reopened.append('run.completed', 'system', null);
-    assert.deepEqual(reopened.verify(), { ok: true, count: 3 });
+    const verdict = reopened.verify();
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.ok && verdict.count, 3);
+    assert.deepEqual(verdict.ok && verdict.head, { seq: 3, hash: reopened.records()[2]!.hash });
     assert.deepEqual(reopened.records()[1]!.data, { a: 1, b: 2 });
   });
 

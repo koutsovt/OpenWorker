@@ -116,7 +116,8 @@ export async function buildPlatform(options: PlatformOptions) {
   const store = new RunStore(state);
   const results = new ResultInbox();
   const registry = new Registry(options.registryDir);
-  const governance = new Governance(users, { roles });
+  // These tests have alice approve her own plans; separation of duties is tested in workforce.test.ts.
+  const governance = new Governance(users, { roles, allowSelfApproval: true });
   const load = { active: 0, peak: 0 };
   const toolResults: { tool: string; result: Json }[] = [];
   const base: Record<string, ToolImplementation> = {

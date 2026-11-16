@@ -31,6 +31,9 @@ const TASK_ID = /^[a-z][a-z0-9-]{0,31}$/;
 /** Ids the platform uses for the stages it adds after the planned work. */
 export const STAGE = { assurance: 'assurance', reassurance: 'assurance-2', report: 'report', rework: (id: string) => `${id}-rework` };
 export const isStageTask = (id: string): boolean => id === STAGE.assurance || id === STAGE.reassurance || id === STAGE.report || id.endsWith('-rework');
+export const isAssuranceStage = (id: string): boolean => id === STAGE.assurance || id === STAGE.reassurance;
+/** Tasks an assurance finding may name: planned work and its rework, never the review or the report. Exact ids, not prefixes. */
+export const isReviewable = (id: string): boolean => !isAssuranceStage(id) && id !== STAGE.report;
 
 const strings = (value: unknown): string[] | undefined =>
   value === undefined || value === null ? [] : Array.isArray(value) && value.every((x) => typeof x === 'string') ? value : undefined;

@@ -1,6 +1,9 @@
 // Agent, skill and tool registries, loaded from version-controlled files.
 // Definitions are data. Only entries that are `approved` AND whose content
-// digest matches the approval lock file can be used at runtime.
+// digest matches the approval lock file can be used at runtime. Tools have no
+// status, but their digests are locked too: an agent whose tools do not all
+// match the lock cannot be used, so a tool's risk or classification cannot be
+// changed without a new approval.
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,6 +25,7 @@ export interface ToolDefinition {
   dataClassification: Classification;
   limits: { maxCallsPerSession: number };
   inputSchema: Json;
+  digest: string;
 }
 
 export interface SkillDefinition {
@@ -123,6 +127,7 @@ const files = (path: string, ext: string) => (existsSync(path) ? readdirSync(pat
 interface Lock {
   agents: Record<string, string>;
   skills: Record<string, string>;
+  tools: Record<string, string>;
 }
 
 export class Registry {
@@ -134,7 +139,7 @@ export class Registry {
   constructor(dir: string) {
     const lockPath = join(dir, 'approved.lock.yaml');
     const rawLock = (existsSync(lockPath) ? yaml(lockPath) : {}) as Partial<Lock> | null;
-    this.lock = { agents: rawLock?.agents ?? {}, skills: rawLock?.skills ?? {} };
+    this.lock = { agents: rawLock?.agents ?? {}, skills: rawLock?.skills ?? {}, tools: rawLock?.tools ?? {} };
 
     for (const file of files(join(dir, 'tools'), '.yaml')) {
       const r = new Reader(yaml(join(dir, 'tools', file)), `tool ${file}`);
@@ -150,6 +155,7 @@ export class Registry {
         action: r.oneOf('action', ['read', 'write', 'execute'] as const), risk: r.oneOf('risk', ['low', 'sensitive'] as const),
         dataClassification: r.oneOf('dataClassification', CLASSIFICATIONS),
         limits: { maxCallsPerSession: limits.maxCallsPerSession as number }, inputSchema,
+        digest: digestOf(r.content()),
       });
     }
 
@@ -203,7 +209,11 @@ export class Registry {
 
   /** The newest approved version of an agent definition. Anything else is refused with a reason. */
   agent(id: string): AgentDefinition {
-    return this.usable('agent', id, this.agents.get(id), (a) => `${a.id}@${a.version}`, this.lock.agents);
+    const agent = this.usable('agent', id, this.agents.get(id), (a) => `${a.id}@${a.version}`, this.lock.agents);
+    for (const name of agent.allowedTools)
+      if (this.lock.tools[name] !== this.tools.get(name)?.digest)
+        throw new RegistryError('tampered', `Tool ${name}, used by agent ${id}, does not match its approved digest`);
+    return agent;
   }
 
   skill(id: string): SkillDefinition {
@@ -235,16 +245,19 @@ export class Registry {
   approvedDigests(): Lock {
     const collect = <T extends { status: Status; digest: string }>(all: Map<string, T[]>, key: (x: T) => string) =>
       Object.fromEntries([...all.values()].flat().filter((x) => x.status === 'approved').map((x) => [key(x), x.digest]));
-    return { agents: collect(this.agents, (a) => `${a.id}@${a.version}`), skills: collect(this.skills, (s) => `${s.id}@${s.version}`) };
+    return {
+      agents: collect(this.agents, (a) => `${a.id}@${a.version}`), skills: collect(this.skills, (s) => `${s.id}@${s.version}`),
+      tools: Object.fromEntries([...this.tools.values()].map((t) => [t.name, t.digest])),
+    };
   }
 
   /** Approved entries whose content no longer matches the lock file. */
   problems(): string[] {
-    const { agents, skills } = this.approvedDigests();
+    const { agents, skills, tools } = this.approvedDigests();
     const check = (kind: string, current: Record<string, string>, locked: Record<string, string>) =>
       Object.entries(current).filter(([key, digest]) => locked[key] !== digest)
-        .map(([key]) => `${kind} ${key}: ${locked[key] ? 'content differs from the approved digest' : 'marked approved but not in the lock file'}`);
-    return [...check('agent', agents, this.lock.agents), ...check('skill', skills, this.lock.skills)];
+        .map(([key]) => `${kind} ${key}: ${locked[key] ? 'content differs from the approved digest' : kind === 'tool' ? 'not in the lock file' : 'marked approved but not in the lock file'}`);
+    return [...check('agent', agents, this.lock.agents), ...check('skill', skills, this.lock.skills), ...check('tool', tools, this.lock.tools)];
   }
 
   private usable<T extends { status: Status; digest: string }>(
