@@ -22,7 +22,7 @@ All five planned milestones are in place: skeleton, registries and governance, o
 | Config loading | `src/config/load.ts`, `config/` | Done |
 | Model gateway and task-level fallback | `src/gateway/` | Done |
 | Agent, skill and tool registries with approval lock | `src/registry/registry.ts`, `registry/` | Done |
-| Policy decisions, approvals, budgets | `src/governance/` | Done |
+| Policy decisions, approvals, budgets | `src/governance/` | Done; self-approval is a policy setting, and budgets apply per run |
 | Agent runtime (instantiation under governance) | `src/runtime/workforce.ts` | Done; one real end-to-end run on DeepSeek |
 | Command line | `src/cli/main.ts` | Done |
 | Orchestrator: planner, plan gate, task graph, parallel execution, retry, restart recovery | `src/orchestrator/` | Done on the fake engine, including a real process kill. **Not yet run against a real model** |
@@ -93,7 +93,8 @@ which is simulated data written for the exercise. What happens:
    A plan cannot assign the Assurance agent or skip it: the platform schedules it.
 4. Tasks with a critical or major finding are reworked by their authors, once, and Assurance reviews again.
 5. If the final verdict is `fail`, the run is held and no report is written. A user with the approver role can
-   override with a reason; both are recorded and printed in the report.
+   override with a reason; both are recorded and printed in the report. Approving your own run needs
+   `allowSelfApproval` (see [Approvals and budgets](#approvals-and-budgets)).
 6. The Orchestrator writes the report from the results. The platform appends a traceability section it generates
    itself: the assurance verdict and findings, the evidence register, models and usage per task, and approvals.
 
@@ -195,11 +196,30 @@ The agent is instantiated from its approved definition in `registry/agents/`, un
 `WORKFORCE_USER` (default `local`, defined in `config/users.yaml`). Sensitive tool calls ask for approval
 at the terminal. Every step is written to the audit ledger.
 
+## Approvals and budgets
+
+At the command line the requester is `WORKFORCE_USER` and the approver is `WORKFORCE_APPROVER`, which defaults
+to the requester. Both must be in `config/users.yaml`, and the approver needs a role with `approve`. These names are
+self-asserted until an identity provider replaces `users.yaml`.
+
+Approving your own request (your own plan, a tool call in your own run, or an override of assurance on your own
+run) is refused unless `allowSelfApproval: true` is set in `config/policies.yaml`. It is set there now because the
+proof of concept has a single local user; set it to `false` once there is a second approver. Every approval in the
+ledger says whether it was a self-approval.
+
+Budgets (`maxModelCalls`, `maxTokens`, `maxCostUsd`, `maxSeconds`) apply to planning and to each execution of a
+run as a whole: every task of the run is charged to one budget, including attempts on a model that failed before a
+fallback, and no task starts once the budget is used up. The calls left in the budget cap each session's model-call
+limit, and the time limit also covers waiting for an approval. Tokens and cost cannot be stopped partway through a
+session, because engines report usage only when a turn ends. A resumed run starts a fresh budget.
+
 ## The registry
 
 Agents, skills and tools are files under `registry/`. An agent or skill is usable only if it is marked
 `approved` **and** its content matches `registry/approved.lock.yaml`. Editing an approved file, or just
 flipping a draft to approved, makes it unusable until the lock is regenerated and reviewed.
+Tool definitions are locked too: if a tool's file changes (its risk, action or data classification, say),
+every agent that uses it is refused until the lock is regenerated.
 
 ```bash
 npm run registry -- check
@@ -234,6 +254,15 @@ Every model selection, fallback and usage figure is written to the audit ledger 
 ```bash
 npm run verify-ledger
 ```
+
+This checks the hash chain and that no records were removed from the end. Someone who can edit the database could
+rewrite both, so keep the ledger head somewhere else: the final report prints it as `<seq>:<hash>`, and
+
+```bash
+npm run verify-ledger -- <seq>:<hash>
+```
+
+fails if the ledger no longer contains that record.
 
 ## Rules of the codebase
 
