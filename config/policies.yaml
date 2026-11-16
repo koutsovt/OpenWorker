@@ -1,4 +1,7 @@
 # What each role may do. Agents are not users: they hold no role and cannot approve anything.
+# The proof of concept has one local user, who must approve their own plans and actions.
+# Set this to false once there is a second approver; every self-approval is marked in the ledger.
+allowSelfApproval: true
 roles:
   requester:
     run: true

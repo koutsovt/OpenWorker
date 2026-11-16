@@ -48,6 +48,11 @@ export interface AgentRunRequest {
   skills?: string[];
   approver?: Approver;
   budget?: Budget;
+  /**
+   * A budget shared with other runs, for example every task of one orchestrated run. Takes
+   * precedence over `budget`. Each run is charged to it, and none starts once it is used up.
+   */
+  tracker?: BudgetTracker;
   /** The orchestrated run and task this instance belongs to. */
   run?: { runId: string; taskId: string };
   /** Called once, before the first tool call that is not a read, so the caller can record it durably. */
@@ -165,16 +170,28 @@ export class Workforce {
       run: request.run?.runId ?? null, task: request.run?.taskId ?? null,
     });
 
-    const budget = new BudgetTracker(request.budget ?? {});
+    const budget = request.tracker ?? new BudgetTracker(request.budget ?? {});
+    // Nothing starts on a budget that is already used up.
+    const spent = budget.exceeded();
+    if (spent) {
+      ledger.append('budget.exceeded', actor, { instance: instance.id, limit: spent, before: 'start' });
+      this.instances.delete(instance.id);
+      return { instance: instance.id, status: 'budget_exceeded', output: null, failure: spent, model: '', tried: [], sideEffects: false };
+    }
+    // The engine stops the session at its model-call limit, so the remaining call budget becomes that limit.
+    const callsLeft = budget.budget.maxModelCalls === undefined ? undefined : budget.budget.maxModelCalls - budget.modelCalls;
+    const limits = agent.limits && callsLeft !== undefined
+      ? { ...agent.limits, maxModelCalls: Math.max(1, Math.min(agent.limits.maxModelCalls, callsLeft)) }
+      : agent.limits;
     const approvalRequired = agent.allowedTools.filter((name) => registry.tools.get(name)?.risk === 'sensitive');
     const instructions = agent.instructions + PLATFORM_RULES;
     try {
       const outcome = await runTask(harness, gateway, ledger, {
         agent: {
           // Any change to what the engine is told produces a new immutable name.
-          name: `${agent.id}-v${agent.version}-${short(agent.digest + instructions + approvalRequired.join(','))}`,
+          name: `${agent.id}-v${agent.version}-${short(agent.digest + instructions + approvalRequired.join(',') + JSON.stringify(limits ?? null))}`,
           instructions, tools: agent.allowedTools, approvalRequired,
-          ...(agent.limits ? { limits: agent.limits } : {}),
+          ...(limits ? { limits } : {}),
         },
         policy: agent.modelPolicy, input: request.input, actor, tag: instance.id,
         ...(skills.length ? { addendum: skillBrief(skills, agent.allowedTools.includes('skills.load')) } : {}),
@@ -182,7 +199,8 @@ export class Workforce {
         mayFallBack: () => !entry.sideEffects,
         approve: (approval) => this.decide(approval, instance, request.approver),
       });
-      budget.charge(outcome.result.usage, gateway.cost(outcome.model, outcome.result.usage));
+      // Every attempt is charged, including those on a model that failed before a fallback.
+      for (const attempt of outcome.attempts) budget.charge(attempt.usage, gateway.cost(attempt.model, attempt.usage));
       const breach = outcome.result.failure?.category === 'timeout' ? 'time' : budget.exceeded();
       if (breach) ledger.append('budget.exceeded', actor, { instance: instance.id, limit: breach });
       return {
@@ -205,12 +223,13 @@ export class Workforce {
       return 'deny';
     }
     const answer = await approver(approval, instance);
-    const allowed = governance.mayApprove(answer.approver);
+    const allowed = governance.mayApprove(answer.approver, instance.user);
     if (!allowed.allow) {
       ledger.append('approval.rejected', `user:${answer.approver}`, { ...base, code: allowed.code, reason: allowed.reason });
       return 'deny';
     }
-    ledger.append(answer.decision === 'approve' ? 'approval.granted' : 'approval.denied', `user:${answer.approver}`, base);
+    ledger.append(answer.decision === 'approve' ? 'approval.granted' : 'approval.denied', `user:${answer.approver}`,
+      { ...base, selfApproval: answer.approver === instance.user });
     return answer.decision;
   }
 }

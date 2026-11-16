@@ -167,6 +167,8 @@ class ClaudeCodeSession implements AgentSession {
   private pending: { request: ApprovalRequest; decide(decision: 'approve' | 'deny'): void; answered: boolean } | undefined;
   private abort: AbortController | undefined;
   private running = false;
+  /** How the current turn ended, once the engine has stopped. Lets `resume` answer after a cancel during an approval. */
+  private ended: TurnResult | undefined;
 
   constructor(deps: SessionDeps) {
     this.deps = deps;
@@ -185,6 +187,7 @@ class ClaudeCodeSession implements AgentSession {
   async run(input: string, options: TurnOptions = {}): Promise<TurnResult> {
     if (this.running) throw new HarnessError('invalid_state', 'A turn is already running');
     this.running = true;
+    this.ended = undefined;
     this.signal = deferred<TurnResult>();
     this.abort = new AbortController();
     // The addendum is application-owned text; it is labelled so it cannot be mistaken for the task.
@@ -208,6 +211,8 @@ class ClaudeCodeSession implements AgentSession {
     this.pending = undefined;
     pending.decide(this.pendingDecision);
     this.pendingDecision = undefined;
+    // The engine may already have stopped (cancelled or failed while the approval waited); nothing else would answer.
+    if (this.ended) this.signal.resolve(this.ended);
     return this.signal.promise;
   }
 
@@ -243,6 +248,7 @@ class ClaudeCodeSession implements AgentSession {
       if (finished) return;
       finished = true;
       this.running = false;
+      this.ended = result;
       this.signal.resolve(result);
     };
     const options: EngineOptions = {
@@ -272,7 +278,9 @@ class ClaudeCodeSession implements AgentSession {
           const request = { id: crypto.randomUUID(), tool: verdict.qualified, arguments: input as Json };
           this.pending = { request, decide: decision.resolve, answered: false };
           this.signal.resolve({ status: 'needs_approval', output: null, approvals: [request], usage: { ...usage } });
-          if ((await decision.promise) === 'deny') return { behavior: 'deny', message: 'A human reviewer denied this action. Do not retry it.' };
+          // A cancel while waiting counts as a denial, so the engine is not left suspended.
+          const aborted = new Promise<'deny'>((ok) => this.abort?.signal.addEventListener('abort', () => ok('deny'), { once: true }));
+          if ((await Promise.race([decision.promise, aborted])) === 'deny') return { behavior: 'deny', message: 'A human reviewer denied this action. Do not retry it.' };
         }
         return { behavior: 'allow', updatedInput: input };
       },

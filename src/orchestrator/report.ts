@@ -60,7 +60,9 @@ export function renderReport(input: ReportInput): string {
   });
   const injections = ledger.filter((r) => r.type === 'injection.flagged' && data(r).run === run.id).map((r) => {
     const d = data(r);
-    return [d.source === 'document' ? `${String(d.document)} ${String(d.anchor)}` : `result of task ${String(d.task)}`, (d.patterns as string[]).join(', '), r.actor];
+    const source = d.source === 'document' ? `${String(d.document)} ${String(d.anchor)}`
+      : d.source === 'project-memory' ? `project memory entry ${String(d.task)}` : `result of task ${String(d.task)}`;
+    return [source, (d.patterns as string[]).join(', '), r.actor];
   });
   const seqs = ledger.filter((r) => data(r).run === run.id || instances.has(String(data(r).instance))).map((r) => r.seq);
 
@@ -108,6 +110,7 @@ export function renderReport(input: ReportInput): string {
     ...(approvals.length ? approvals.map((a) => `- ${a}`) : ['_None recorded._']),
     '',
     seqs.length ? `Audit ledger records ${Math.min(...seqs)} to ${Math.max(...seqs)} cover this run. Check the chain with \`npm run verify-ledger\`.` : '',
+    ...(ledger.length ? ['', `Ledger head when this report was written: \`${ledger.at(-1)!.seq}:${ledger.at(-1)!.hash}\`. Keep it outside this machine; \`npm run verify-ledger -- ${ledger.at(-1)!.seq}:${ledger.at(-1)!.hash}\` then detects records removed after it.`] : []),
     '',
   ];
   return lines.join('\n');

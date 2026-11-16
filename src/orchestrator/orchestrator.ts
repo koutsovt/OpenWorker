@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AuditLedger } from '../audit/ledger.ts';
-import type { Budget } from '../governance/budget.ts';
+import { BudgetTracker, type Budget } from '../governance/budget.ts';
 import { screenJson } from '../governance/injection.ts';
 import type { Governance } from '../governance/policy.ts';
 import type { Json } from '../harness/port.ts';
@@ -15,7 +15,7 @@ import { RegistryError, type Registry } from '../registry/registry.ts';
 import { GovernanceError, type AgentRunOutcome, type Approver, type Workforce } from '../runtime/workforce.ts';
 import type { ResultInbox } from '../tools/result.ts';
 import { checkResult, CONTRACT_SHAPES, isContract, type AssuranceResult, type ContractName } from './contracts.ts';
-import { isStageTask, parsePlan, PlanError, STAGE, validatePlan, type Plan } from './graph.ts';
+import { isReviewable, isStageTask, parsePlan, PlanError, STAGE, validatePlan, type Plan } from './graph.ts';
 import { renderReport } from './report.ts';
 import type { RunRecord, RunStatus, RunStore, TaskRecord, TaskStatus } from './store.ts';
 
@@ -36,7 +36,11 @@ export interface OrchestratorOptions {
   maxAttempts?: number;
   /** Planner attempts; after a rejected plan the planner is told why and asked once more. */
   maxPlanAttempts?: number;
-  /** Applied to every task and to planning unless the call gives its own. */
+  /**
+   * Applied to planning, and to each execution of a run as a whole: every task of the run is
+   * charged to one budget, and no task starts once it is used up. A call may give its own.
+   * A resumed run starts a fresh budget.
+   */
   budget?: Budget;
   /**
    * Agent definition that reviews the planned work. With it set, every run ends with assurance,
@@ -67,6 +71,8 @@ export interface RunSummary {
 }
 
 const RESULT_TOOL = 'result.submit';
+/** What the stages of one execution share: the approver and the run's budget. */
+interface RunOptions { approver?: Approver; tracker: BudgetTracker }
 const digest = (value: Json) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
 const unfinished: TaskStatus[] = ['failed', 'blocked', 'needs_attention'];
 
@@ -135,14 +141,14 @@ export class Orchestrator {
     const { governance, ledger, store } = this.deps;
     const run = this.runOrThrow(runId);
     if (run.status !== 'planned') throw new OrchestratorError('NOT_AWAITING_APPROVAL', `Run ${runId} is ${run.status}, not awaiting plan approval`);
-    const allowed = governance.mayApprove(approver);
+    const allowed = governance.mayApprove(approver, run.user);
     if (!allowed.allow) {
       ledger.append('plan.approval_rejected', `user:${approver}`, { run: runId, code: allowed.code, reason: allowed.reason });
       throw new GovernanceError(allowed.code, allowed.reason);
     }
     const status: RunStatus = decision === 'approve' ? 'approved' : 'rejected';
     store.setRunStatus(runId, status);
-    ledger.append(decision === 'approve' ? 'plan.approved' : 'plan.denied', `user:${approver}`, { run: runId });
+    ledger.append(decision === 'approve' ? 'plan.approved' : 'plan.denied', `user:${approver}`, { run: runId, selfApproval: approver === run.user });
     return status;
   }
 
@@ -173,9 +179,10 @@ export class Orchestrator {
     ledger.append(run.status === 'approved' ? 'run.started' : 'run.resumed', actor, { run: runId, interrupted: interrupted.map((t) => t.id) });
     store.setRunStatus(runId, 'running');
 
-    await this.drain(run, options);
+    const running: RunOptions = { ...options, tracker: new BudgetTracker(options.budget ?? this.options.budget) };
+    await this.drain(run, running);
     const status: RunStatus = this.options.assuranceAgent
-      ? await this.stages(run, this.options.assuranceAgent, options)
+      ? await this.stages(run, this.options.assuranceAgent, running)
       : store.tasks(runId).every((t) => t.status === 'completed') ? 'completed' : 'failed';
     store.setRunStatus(runId, status);
     ledger.append(status === 'held' ? 'run.held' : 'run.finished', actor, {
@@ -192,14 +199,14 @@ export class Orchestrator {
     const { governance, ledger, project } = this.deps;
     const run = this.runOrThrow(runId);
     if (run.status !== 'held') throw new OrchestratorError('NOT_HELD', `Run ${runId} is ${run.status}, not held by assurance`);
-    const allowed = governance.mayApprove(approver);
+    const allowed = governance.mayApprove(approver, run.user);
     if (!allowed.allow) {
       ledger.append('assurance.override_rejected', `user:${approver}`, { run: runId, code: allowed.code, reason: allowed.reason });
       throw new GovernanceError(allowed.code, allowed.reason);
     }
     if (!reason.trim()) throw new OrchestratorError('REASON_REQUIRED', 'An override needs a reason');
     project.put(runId, 'decision', 'assurance-override', { approver, reason: reason.trim() });
-    ledger.append('assurance.overridden', `user:${approver}`, { run: runId, reason: reason.trim() });
+    ledger.append('assurance.overridden', `user:${approver}`, { run: runId, reason: reason.trim(), selfApproval: approver === run.user });
   }
 
   /** Path of the final report for a completed run, when reports are being written. */
@@ -208,7 +215,7 @@ export class Orchestrator {
   }
 
   /** Runs every task that is ready until nothing more can start. */
-  private async drain(run: RunRecord, options: { approver?: Approver; budget?: Budget }): Promise<void> {
+  private async drain(run: RunRecord, options: RunOptions): Promise<void> {
     const { store } = this.deps;
     const runId = run.id;
     const active = new Map<string, Promise<void>>();
@@ -233,7 +240,7 @@ export class Orchestrator {
    * a task in the run store, and the next step is decided from stored results alone, so a
    * killed run resumes at the step it had reached.
    */
-  private async stages(run: RunRecord, assuranceAgent: string, options: { approver?: Approver; budget?: Budget }): Promise<RunStatus> {
+  private async stages(run: RunRecord, assuranceAgent: string, options: RunOptions): Promise<RunStatus> {
     const { store, registry, ledger } = this.deps;
     while (true) {
       const tasks = store.tasks(run.id);
@@ -367,7 +374,7 @@ export class Orchestrator {
     }
   }
 
-  private async attempt(run: RunRecord, task: TaskRecord, all: TaskRecord[], options: { approver?: Approver; budget?: Budget }): Promise<void> {
+  private async attempt(run: RunRecord, task: TaskRecord, all: TaskRecord[], options: RunOptions): Promise<void> {
     const { workforce, registry, ledger, store, project, results } = this.deps;
     const actor = `user:${run.user}`;
     const base = { run: run.id, task: task.id, agent: task.agent };
@@ -375,7 +382,7 @@ export class Orchestrator {
       const agent = registry.agent(task.agent);
       const wantsResult = agent.allowedTools.includes(RESULT_TOOL);
       const contract = contractFor(task, agent.outputContract);
-      const reviewable = new Set(all.map((t) => t.id).filter((id) => !id.startsWith(STAGE.assurance) && id !== STAGE.report));
+      const reviewable = new Set(all.map((t) => t.id).filter(isReviewable));
       // Another agent's result is data. Anything in it that reads as an instruction is removed before it is passed on.
       const upstream = all.filter((t) => task.dependsOn.includes(t.id)).map((t) => {
         const screened = screenJson(t.result);
@@ -390,7 +397,7 @@ export class Orchestrator {
         store.startAttempt(run.id, task.id);
         ledger.append('run.task_started', actor, { ...base, attempt });
         const outcome: AgentRunOutcome = await workforce.runAgent({
-          agentId: task.agent, user: run.user, skills: task.skills, budget: options.budget ?? this.options.budget,
+          agentId: task.agent, user: run.user, skills: task.skills, tracker: options.tracker,
           input: taskBrief(run.objective, task, upstream, wantsResult, contract, previous),
           run: { runId: run.id, taskId: task.id },
           onSideEffect: () => store.markSideEffects(run.id, task.id),

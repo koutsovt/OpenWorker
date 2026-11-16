@@ -1,5 +1,9 @@
-// Append-only audit ledger. Each record is hash-chained to the previous one,
-// so any edit, deletion or reordering is detectable by `verify()`.
+// Append-only audit ledger. Each record is hash-chained to the previous one, so an edit,
+// deletion or reordering inside the chain is detectable by `verify()`. Deleting records from
+// the end leaves a valid chain, so the latest seq and hash (the head) are also kept in their own
+// table, written in the same transaction. That stops a careless truncation; someone who can
+// rewrite the file can rewrite the head too, so for real assurance record `head()` somewhere
+// else (the final report prints it) and pass it to `verify()` later.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { Json } from '../harness/port.ts';
@@ -31,6 +35,15 @@ function hashOf(r: Omit<AuditRecord, 'hash'>): string {
     .digest('hex');
 }
 
+export interface LedgerHead {
+  seq: number;
+  hash: string;
+}
+
+export type Verification =
+  | { ok: true; count: number; head: LedgerHead }
+  | { ok: false; brokenAt: number; reason: string };
+
 export class AuditLedger {
   private readonly db: DatabaseSync;
 
@@ -39,6 +52,15 @@ export class AuditLedger {
     this.db.exec(`CREATE TABLE IF NOT EXISTS audit (
       seq INTEGER PRIMARY KEY, at TEXT NOT NULL, type TEXT NOT NULL, actor TEXT NOT NULL,
       data TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL)`);
+    this.db.exec('CREATE TABLE IF NOT EXISTS head (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL, hash TEXT NOT NULL)');
+    // A ledger written before the head table existed adopts its current last record.
+    this.db.exec('INSERT OR IGNORE INTO head (id, seq, hash) SELECT 1, seq, hash FROM audit ORDER BY seq DESC LIMIT 1');
+  }
+
+  /** The latest record's seq and hash; genesis for an empty ledger. Record it elsewhere to detect truncation later. */
+  head(): LedgerHead {
+    const row = this.db.prepare('SELECT seq, hash FROM head WHERE id = 1').get() as LedgerHead | undefined;
+    return row ? { seq: row.seq, hash: row.hash } : { seq: 0, hash: GENESIS };
   }
 
   append(type: string, actor: string, data: Json): AuditRecord {
@@ -48,8 +70,16 @@ export class AuditLedger {
       seq: (last?.seq ?? 0) + 1, at: new Date().toISOString(), type, actor, data, prevHash: last?.hash ?? GENESIS,
     };
     const record = { ...partial, hash: hashOf(partial) };
-    this.db.prepare('INSERT INTO audit (seq, at, type, actor, data, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(record.seq, record.at, record.type, record.actor, canonical(record.data), record.prevHash, record.hash);
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('INSERT INTO audit (seq, at, type, actor, data, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(record.seq, record.at, record.type, record.actor, canonical(record.data), record.prevHash, record.hash);
+      this.db.prepare('INSERT OR REPLACE INTO head (id, seq, hash) VALUES (1, ?, ?)').run(record.seq, record.hash);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
     return record;
   }
 
@@ -62,8 +92,11 @@ export class AuditLedger {
     }));
   }
 
-  /** Returns the first broken sequence number, or `ok`. */
-  verify(): { ok: true; count: number } | { ok: false; brokenAt: number; reason: string } {
+  /**
+   * Returns the first broken sequence number, or `ok` with the head. `expect` is a head recorded
+   * earlier, outside this file: the chain must still contain that exact record.
+   */
+  verify(expect?: LedgerHead): Verification {
     let prev = GENESIS;
     let expected = 1;
     const all = this.records();
@@ -74,7 +107,15 @@ export class AuditLedger {
       prev = r.hash;
       expected++;
     }
-    return { ok: true, count: all.length };
+    const head = this.head();
+    const last = all.at(-1);
+    if ((last?.seq ?? 0) !== head.seq || (last?.hash ?? GENESIS) !== head.hash)
+      return { ok: false, brokenAt: Math.min(expected, head.seq), reason: 'records missing from the end (head mismatch)' };
+    if (expect) {
+      const anchored = expect.seq === 0 ? expect.hash === GENESIS : all[expect.seq - 1]?.hash === expect.hash;
+      if (!anchored) return { ok: false, brokenAt: expect.seq, reason: 'does not contain the expected head' };
+    }
+    return { ok: true, count: all.length, head };
   }
 
   close(): void {

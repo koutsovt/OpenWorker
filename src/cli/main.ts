@@ -15,6 +15,7 @@ import type { Json } from '../harness/port.ts';
 import { KnowledgeBase } from '../memory/knowledge.ts';
 import { EvidenceStore, openState, ProjectMemory } from '../memory/state.ts';
 import { Orchestrator, type RunSummary } from '../orchestrator/orchestrator.ts';
+import { isAssuranceStage } from '../orchestrator/graph.ts';
 import { RunStore } from '../orchestrator/store.ts';
 import { Registry } from '../registry/registry.ts';
 import { Workforce, type Approver } from '../runtime/workforce.ts';
@@ -42,7 +43,10 @@ const newHarness = () => {
 // Register only providers whose key is present; a policy that needs a missing one fails with a clear error.
 const available = (config: ReturnType<typeof loadConfig>) => config.providers.filter((p) => !p.apiKeyEnv || process.env[p.apiKeyEnv]);
 
+// Identities at the command line are self-asserted until an identity provider replaces users.yaml.
+// The requester and the approver are named separately, so separation of duties can be exercised.
 const user = process.env.WORKFORCE_USER ?? 'local';
+const approverId = process.env.WORKFORCE_APPROVER ?? user;
 const prompt = async (question: string): Promise<string> => {
   const terminal = createInterface({ input: process.stdin, output: process.stderr });
   const answer = await terminal.question(question);
@@ -52,7 +56,7 @@ const prompt = async (question: string): Promise<string> => {
 const ask = async (question: string): Promise<boolean> => (await prompt(question)).toLowerCase() === 'y';
 // The person at the terminal decides. Their identity is checked against the approver role.
 const approver: Approver = async (request, instance) => ({
-  approver: user,
+  approver: approverId,
   decision: await ask(`\nApproval needed: ${instance.id} wants to call ${request.tool}\n${JSON.stringify(request.arguments, null, 2)}\nApprove? [y/N] `) ? 'approve' : 'deny',
 });
 
@@ -91,8 +95,12 @@ const report = (summary: RunSummary): void => {
 };
 
 if (command === 'verify-ledger') {
-  const verdict = ledger.verify();
-  console.log(verdict.ok ? `Ledger intact: ${verdict.count} records.` : `Ledger BROKEN at record ${verdict.brokenAt}: ${verdict.reason}.`);
+  // verify-ledger [<seq>:<hash>]: the optional head is one recorded earlier, for example in a final report.
+  const [seq, hash] = (rest[0] ?? '').split(':');
+  const verdict = ledger.verify(rest[0] ? { seq: Number(seq), hash: hash ?? '' } : undefined);
+  console.log(verdict.ok
+    ? `Ledger intact: ${verdict.count} records. Head ${verdict.head.seq}:${verdict.head.hash}`
+    : `Ledger BROKEN at record ${verdict.brokenAt}: ${verdict.reason}.`);
   process.exit(verdict.ok ? 0 : 1);
 } else if (command === 'ask') {
   const [policy, ...words] = rest;
@@ -186,19 +194,19 @@ if (command === 'verify-ledger') {
       console.error('  Then, run by the platform: independent assurance, one rework round if needed, and the final report.');
     }
     if (store.run(runId)?.status === 'planned')
-      orchestrator.approvePlan(runId, user, await ask(`\nApprove this plan and run it as ${user}? [y/N] `) ? 'approve' : 'deny');
+      orchestrator.approvePlan(runId, approverId, await ask(`\nApprove this plan as ${approverId}, to run as ${user}? [y/N] `) ? 'approve' : 'deny');
     if (store.run(runId)?.status === 'rejected') {
       console.log(`Plan for ${runId} was not approved. Nothing ran.`);
       process.exitCode = 1;
     } else {
       let summary = await orchestrator.execute(runId, { approver });
       if (summary.status === 'held') {
-        const verdict = (summary.tasks.findLast((t) => t.id.startsWith('assurance'))?.result ?? {}) as { summary?: string; findings?: { severity: string; task: string; issue: string }[] };
+        const verdict = (summary.tasks.findLast((t) => isAssuranceStage(t.id))?.result ?? {}) as { summary?: string; findings?: { severity: string; task: string; issue: string }[] };
         console.error(`\nIndependent assurance FAILED this work, so no report was produced.\n${verdict.summary ?? ''}`);
         for (const f of verdict.findings ?? []) console.error(`  [${f.severity}] ${f.task}: ${f.issue}`);
-        const reason = await prompt(`\nTo override as ${user} and produce the report anyway, type a reason. Leave empty to stop here: `);
+        const reason = await prompt(`\nTo override as ${approverId} and produce the report anyway, type a reason. Leave empty to stop here: `);
         if (reason) {
-          orchestrator.overrideAssurance(runId, user, reason);
+          orchestrator.overrideAssurance(runId, approverId, reason);
           summary = await orchestrator.execute(runId, { approver });
         }
       }
