@@ -10,6 +10,7 @@
     "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 'tests/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
     "orchestrate": "node --disable-warning=ExperimentalWarning src/cli/main.ts orchestrate",
+    "assess": "node --disable-warning=ExperimentalWarning src/cli/main.ts assess",
     "resume": "node --disable-warning=ExperimentalWarning src/cli/main.ts resume",
     "usage": "node --disable-warning=ExperimentalWarning src/cli/main.ts usage",
     "runs": "node --disable-warning=ExperimentalWarning src/cli/main.ts runs",

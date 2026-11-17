@@ -220,6 +220,11 @@ export class Registry {
     return this.usable('skill', id, this.skills.get(id), (s) => `${s.id}@${s.version}`, this.lock.skills);
   }
 
+  /** Whether any version of an agent or skill with this id exists, in any status. A proposed new id must not. */
+  knows(kind: 'agent' | 'skill', id: string): boolean {
+    return (kind === 'agent' ? this.agents : this.skills).has(id);
+  }
+
   /** Every agent that can be instantiated right now: approved and matching the lock. */
   usableAgents(): AgentDefinition[] {
     return [...this.agents.keys()].sort().flatMap((id) => {

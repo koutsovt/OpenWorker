@@ -5,7 +5,7 @@ import type { AuditRecord } from '../audit/ledger.ts';
 import type { Json } from '../harness/port.ts';
 import type { EvidenceRecord, MemoryEntry } from '../memory/state.ts';
 import { citedEvidence, type AssuranceResult, type ReportResult } from './contracts.ts';
-import { isStageTask, STAGE } from './graph.ts';
+import { isStageTask, STAGE, type UncoveredNeed } from './graph.ts';
 import type { RunRecord, TaskRecord } from './store.ts';
 
 export interface ReportInput {
@@ -31,6 +31,7 @@ export function renderReport(input: ReportInput): string {
   const firstVerdict = by.get(STAGE.assurance)!.result as unknown as AssuranceResult;
   const override = decisions.find((d) => d.key === 'assurance-override')?.content as { approver: string; reason: string } | undefined;
   const independence = decisions.filter((d) => d.key.startsWith('verdict:')).map((d) => d.content as { task: string; provider: string | null; independent: boolean });
+  const uncovered = (decisions.find((d) => d.key === 'uncovered')?.content ?? []) as unknown as UncoveredNeed[];
   const reworked = tasks.filter((t) => t.id.endsWith('-rework')).map((t) => t.id.replace(/-rework$/, ''));
 
   // Which agent instances belonged to this run, and what each used.
@@ -89,6 +90,11 @@ export function renderReport(input: ReportInput): string {
     verdict.findings.length
       ? table(['Severity', 'Task', 'Finding', 'Resolution'], verdict.findings.map((f) => [f.severity, f.task, f.issue, f.resolution]))
       : '_No findings remain._',
+    ...(uncovered.length ? [
+      '', '## Not covered by the plan', '',
+      'The approved plan assigned these parts of the objective to no one, because no approved agent or skill fits them. They were not assessed. `npm run assess` drafts the skills or agents that would cover them.',
+      '', table(['Need', 'Why not covered'], uncovered.map((u) => [u.need, u.reason || 'not stated'])),
+    ] : []),
     '', '## Evidence register', '',
     evidence.length
       ? table(['Id', 'Document', 'Passage', 'Content hash', 'Retrieved by', 'Cited by'],

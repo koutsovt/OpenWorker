@@ -15,8 +15,8 @@ import type { EvidenceStore, ProjectMemory } from '../memory/state.ts';
 import { RegistryError, type Registry } from '../registry/registry.ts';
 import { GovernanceError, type AgentRunOutcome, type Approver, type Workforce } from '../runtime/workforce.ts';
 import type { ResultInbox } from '../tools/result.ts';
-import { checkResult, CONTRACT_SHAPES, isContract, type AssuranceResult, type ContractName } from './contracts.ts';
-import { isReviewable, isStageTask, parsePlan, PlanError, STAGE, validatePlan, type Plan } from './graph.ts';
+import { checkResult, CONTRACT_SHAPES, isContract, PLATFORM_ONLY_CONTRACTS, type AssuranceResult, type ContractName } from './contracts.ts';
+import { isReviewable, isStageTask, parsePlan, PlanError, STAGE, validatePlan, type Plan, type UncoveredNeed } from './graph.ts';
 import { renderReport } from './report.ts';
 import type { RunRecord, RunStatus, RunStore, TaskRecord, TaskStatus } from './store.ts';
 
@@ -323,7 +323,7 @@ export class Orchestrator {
       }
       if (!by.get(STAGE.report)) {
         store.addTask(run.id, {
-          id: STAGE.report, agent: this.options.plannerAgent, objective: REPORT_OBJECTIVE, skills: [],
+          id: STAGE.report, agent: this.options.plannerAgent, objective: reportObjective(this.uncovered(run.id)), skills: [],
           dependsOn: [...planned.map((t) => (by.has(STAGE.rework(t.id)) ? STAGE.rework(t.id) : t.id)), final.id],
         });
         await this.drain(run, options);
@@ -351,6 +351,12 @@ export class Orchestrator {
     if (!independent) ledger.append('assurance.independence_reduced', 'system', { run: run.id, task: assurance.id, provider });
   }
 
+  /** What the approved plan said no approved agent or skill covers. */
+  uncovered(runId: string): UncoveredNeed[] {
+    const entry = this.deps.project.entries(runId, 'decision').find((d) => d.key === 'uncovered');
+    return (entry?.content ?? []) as unknown as UncoveredNeed[];
+  }
+
   private override(runId: string): boolean {
     return this.deps.project.entries(runId, 'decision').some((d) => d.key === 'assurance-override');
   }
@@ -368,9 +374,13 @@ export class Orchestrator {
     ledger.append('report.written', 'system', { run: run.id, digest: createHash('sha256').update(text).digest('hex') });
   }
 
-  /** Agents a plan may not use: the planner, and the reviewer, which the platform schedules itself so it cannot be planned away. */
+  /**
+   * Agents a plan may not use: the planner, the reviewer, which the platform schedules itself so it cannot be planned
+   * away, and agents whose output is about the platform rather than the objective (the capability analyst).
+   */
   private unplannable(): string[] {
-    return [this.options.plannerAgent, ...(this.options.assuranceAgent ? [this.options.assuranceAgent] : [])];
+    const platformOnly = this.deps.registry.usableAgents().filter((a) => a.outputContract && PLATFORM_ONLY_CONTRACTS.has(a.outputContract)).map((a) => a.id);
+    return [this.options.plannerAgent, ...(this.options.assuranceAgent ? [this.options.assuranceAgent] : []), ...platformOnly];
   }
 
   summary(runId: string): RunSummary {
@@ -387,9 +397,11 @@ export class Orchestrator {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     store.createRun(runId, user, objective, plan);
     project.put(runId, 'objective', 'objective', objective);
+    if (plan.uncovered?.length) project.put(runId, 'decision', 'uncovered', plan.uncovered as unknown as Json);
     ledger.append('plan.accepted', `user:${user}`, {
       run: runId, proposedBy, planDigest: digest(plan as unknown as Json),
       tasks: plan.tasks.map((t) => ({ id: t.id, agent: t.agent, skills: t.skills, dependsOn: t.dependsOn })),
+      uncovered: (plan.uncovered ?? []).map((u) => u.need),
     });
     return runId;
   }
@@ -488,12 +500,13 @@ export class Orchestrator {
     }));
     return [
       'Plan the work for the objective below as a task graph. Do not do the work yourself.',
-      `Hand the plan back by calling ${RESULT_TOOL} with {"result": {"tasks": [{"id", "agent", "objective", "skills", "dependsOn"}]}}.`,
+      `Hand the plan back by calling ${RESULT_TOOL} with {"result": {"tasks": [{"id", "agent", "objective", "skills", "dependsOn"}], "uncovered": [{"need", "reason"}]}}.`,
       '- id: short, lower-case, hyphenated, unique.',
       '- agent: one of the agent ids in the catalogue. No other agent exists.',
       '- skills: ids from that agent\'s own skill list, or an empty list.',
       '- dependsOn: ids of tasks whose results this task needs. Tasks with no dependency between them run in parallel.',
       '- objective: what this task must produce, written for the agent that will do it.',
+      '- uncovered: parts of the objective that no agent and skill in the catalogue fits, each with why. Do not stretch an agent to cover work outside its purpose; list it here instead, so the approver sees the gap. Leave the list empty if everything is covered.',
       'The platform validates the plan and a person approves it before anything runs.',
       ...(this.options.assuranceAgent ? ['Do not plan a review or a final report: once your tasks finish, the platform runs independent assurance and then the report itself.'] : []),
       '',
@@ -522,6 +535,12 @@ const REPORT_OBJECTIVE = [
   'Organise it into sections that answer the objective. For each section, list the evidence ids that the underlying task results cite for it.',
   'State plainly any assurance finding that remains open, and carry unresolved questions into openQuestions.',
 ].join('\n');
+/** The report must not read as complete when the approved plan left parts of the objective to no one. */
+const reportObjective = (uncovered: UncoveredNeed[]): string => uncovered.length ? [
+  REPORT_OBJECTIVE,
+  'The approved plan left these parts of the objective uncovered, because no approved agent or skill fits them. Say in the report that they were not assessed, and carry each into openQuestions:',
+  ...uncovered.map((u) => `- ${u.need}${u.reason ? ` (${u.reason})` : ''}`),
+].join('\n') : REPORT_OBJECTIVE;
 const reworkObjective = (task: TaskRecord): string => [
   `Revise your earlier result for task "${task.id}" to resolve the assurance findings about it. Your earlier result and the findings are below.`,
   'Keep what was sound, change what the findings require, and submit the complete revised result, not a list of changes.',

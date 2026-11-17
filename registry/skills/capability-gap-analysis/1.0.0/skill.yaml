@@ -1,0 +1,22 @@
+id: capability-gap-analysis
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Set what a body of work needs against the approved agents and skills, and recommend the smallest additions that would cover the gaps.
+scope: Any new kind of work before it is planned on the platform. Not an assessment of the work itself.
+inputs:
+  - "The documents describing the work"
+  - "The catalogue of approved agents, their eligible skills and their tools"
+outputs:
+  - "The capabilities the work needs, each covered, partly covered or not covered, with the agent and skills that cover it"
+  - "For each gap, the smallest change that would cover it: a new skill, an existing skill for another agent, or a new agent"
+  - "Data the work needs that is above the agents' or tools' classification"
+qualityCriteria:
+  - "Needs are capabilities, not a restatement of each requirement"
+  - "Coverage is judged from each skill's purpose and scope, not from its name"
+  - "A new agent is recommended only when no existing agent's purpose fits"
+evidenceRequirements:
+  - "Each need cites the passage that shows the work requires it"
+dependencies: []
+applicableRoles: [capability-analyst]
+suggestedTools: []

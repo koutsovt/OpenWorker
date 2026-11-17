@@ -30,7 +30,8 @@ reduced (no OpenAI or DeepSeek key was available). It has not yet run as designe
 | Orchestrator: planner, plan gate, task graph, parallel execution, retry, restart recovery | `src/orchestrator/` | Done on the fake engine, including a real process kill; one real run on Claude (12 tasks, one rework round with cascade) |
 | Knowledge search, evidence records, project memory | `src/memory/`, `src/tools/knowledge.ts` | Done |
 | Structured results and output contracts | `src/tools/result.ts`, `src/orchestrator/contracts.ts` | Done; a result must match its contract and cite only evidence that exists in the run |
-| Six agents, seven skills | `registry/` | Written and locked. **Review them: the lock is your approval** |
+| Seven agents, eight skills | `registry/` | Written and locked. **Review them: the lock is your approval** |
+| Capability assessment and uncovered needs in plans | `src/orchestrator/assessment.ts`, `graph.ts` | Done on the fake engine; not yet run on a real model |
 | Assurance, rework, fail gate, final report | `src/orchestrator/orchestrator.ts`, `report.ts` | Done on the fake engine |
 | Scenario knowledge pack (simulated) | `scenarios/research-ethics-eforms/` | Done |
 | Prompt-injection screen and test set | `src/governance/injection.ts`, `scenarios/injection-set/` | Done; three techniques are known to get past the screen and are stopped by other controls |
@@ -150,6 +151,28 @@ What happens to a task when things go wrong:
 | A dependency did not complete | Task marked `blocked`; unrelated tasks still run |
 
 A re-issued task starts a new session, so read-only tool calls it made before the kill are made again.
+
+The planner may also list parts of the objective that no approved agent and skill fits, rather than stretch
+an agent beyond its purpose. They are shown as **NOT COVERED** before you approve, are recorded with the plan,
+are passed to the report writer as open questions, and appear in the report under "Not covered by the plan".
+
+## Assess a new kind of work
+
+Before planning work the platform has not done before, check whether the approved agents and skills can do it:
+
+```bash
+node --env-file=/path/to/private.env --disable-warning=ExperimentalWarning src/cli/main.ts assess --scenario scenarios/research-ethics-eforms
+```
+
+The `capability-analyst` agent reads the scenario's knowledge documents and is given the catalogue of approved
+agents, their eligible skills and their tools. It lists what the work needs, each cited to the passage that
+shows it, as covered, partly covered or a gap, and recommends the smallest change for each gap: a new skill
+for an existing agent, an existing skill for another agent, or a new agent. The platform checks the result
+against the registry in code (named agents are approved, named skills are eligible for them, new ids are not
+taken) and sends it back once if it fails. The gap report goes to `.state/reports/assess-<id>.md`.
+
+The analyst is read-only and is never given planned work. Nothing it recommends exists until a person writes
+the YAML, the owner reviews it, and the lock is regenerated (see [The registry](#the-registry)).
 
 ## Cost and usage
 

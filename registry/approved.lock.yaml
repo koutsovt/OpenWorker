@@ -1,12 +1,14 @@
 # Digests of approved agent and skill definitions. Changed only by reviewed pull request.
 agents:
   assurance@2: bed2307bf8ba8bebe8274ba431e35f3570dbb40ae2b319123c44a80a9e290b0d
+  capability-analyst@1: 74f275acb0e429abe39676fb8fb9c11fb1d1e6fa18221175b4de0d75f13edc0a
   data@1: d689b9ff02ffe957b72faa1f2da59bb6a7ff94ae45c60c1b1d55070f9daeaa7a
   orchestrator@2: c8ff4724f76e42024eeec08dd5118e7443d0b8dcde1d47593538b27a0088c211
   research@1: b329e9c6504e310af6c60988db71759d9b57dd2c838fdcb26297852038437e5e
   security@1: 86474dd5e2cab346a0087cda63cd8ab05dcbd8403def8eeb7d4fd6d932b78839
   solution-architecture@1: 31996ec77173c17bc2f38a9178b236adefe21fb4e570c55ca89b38300946b4b1
 skills:
+  capability-gap-analysis@1.0.0: 591098704daca62a493c5cf91878778dcdbcde847d56e34879707234588ac100
   evidence-verification@1.0.0: a344b3b83ce446647cea847ba26a8e67e3bd1c29192e2f1ae780e067a181fe9f
   hosting-architecture-review@1.0.0: c20d01757422cdd84fae4f900e292890957d938611291914a3bf3704e418e6ff
   independent-solution-assurance@1.0.0: da82a3aa7ca5e80cb41c91ce45f9534b851ffbf377e2e362c61817a4daf0a36a
