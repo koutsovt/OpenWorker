@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import type { Json } from '../src/harness/port.ts';
-import { checkAssessment } from '../src/orchestrator/assessment.ts';
-import type { CapabilityAssessment, CapabilityNeed } from '../src/orchestrator/contracts.ts';
+import { checkAssessment, renderAssessment } from '../src/orchestrator/assessment.ts';
+import { checkResult, parseAssessment, type CapabilityAssessment, type CapabilityNeed } from '../src/orchestrator/contracts.ts';
 import { parsePlan, PLAN_LIMITS, validatePlan } from '../src/orchestrator/graph.ts';
 import { Registry } from '../src/registry/registry.ts';
 import { call, plan, platform, script, submit } from './support/scenario-platform.ts';
@@ -88,6 +88,26 @@ describe('capability assessment: registry checks', () => {
     assert.match(check(need({ coverage: 'partial' })), /a partial needs a recommendation/);
   });
 
+  it('reads a blank or "none" recommendation as no recommendation', () => {
+    const context = { evidenceIds: new Set(['ev-1']), taskIds: new Set<string>() };
+    for (const recommendation of [{ kind: 'none', id: '', agent: '', detail: '' }, { kind: '', id: '', detail: '' }, null]) {
+      const raw = { summary: 's', needs: [{ ...need({}), recommendation }] } as unknown as Json;
+      assert.deepEqual(checkResult('capability-assessment', raw, context), [], JSON.stringify(recommendation));
+      const parsed = parseAssessment(raw);
+      assert.equal(parsed.needs[0]!.recommendation, undefined);
+      assert.deepEqual(checkAssessment(parsed, registry), []);
+    }
+    // A real recommendation still needs its id and detail, and a blank agent is dropped.
+    const half = { summary: 's', needs: [{ ...need({ coverage: 'partial' }), recommendation: { kind: 'new-skill', id: '', agent: '', detail: '' } }] } as unknown as Json;
+    assert.match(checkResult('capability-assessment', half, context).join(), /recommendation\.id[\s\S]*recommendation\.detail/);
+  });
+
+  it('refuses a new agent with no skill recommended for it, and accepts an existing skill given to it', () => {
+    const agent = need({ coverage: 'gap', coveredBy: [], recommendation: { kind: 'new-agent', id: 'compliance', detail: 'd' } });
+    assert.match(check(agent), /new agent compliance has no skill/);
+    assert.equal(check(agent, need({ coverage: 'gap', coveredBy: [], recommendation: { kind: 'extend-agent', id: 'requirements-traceability', agent: 'compliance', detail: 'd' } })), '');
+  });
+
   it('refuses recommendations that are not new or do not fit', () => {
     assert.match(check(need({ coverage: 'partial', recommendation: { kind: 'new-skill', id: 'evidence-verification', detail: 'd' } })), /skill evidence-verification already exists/);
     assert.match(check(need({ coverage: 'gap', coveredBy: [], recommendation: { kind: 'new-agent', id: 'data', detail: 'd' } })), /agent data already exists/);
@@ -97,15 +117,33 @@ describe('capability assessment: registry checks', () => {
   });
 });
 
+describe('gap report', () => {
+  it('shows each change once, with one description, the needs it serves, and a warning when a skill is broad', () => {
+    const need = (n: number): CapabilityNeed => ({
+      need: `need ${n}`, evidence: ['ev-1'], coverage: 'partial', coveredBy: [{ agent: 'solution-architecture', skills: [] }], priority: n === 3 ? 'high' : 'medium',
+      recommendation: { kind: 'new-skill', id: 'business-case-appraisal', agent: 'solution-architecture', detail: `description ${n}` },
+    });
+    const text = renderAssessment({ id: 'assess-1', user: 'local', scope: 'x', result: { summary: 's', needs: [1, 2, 3, 4].map(need) }, evidence: [] });
+    assert.match(text, /\*\*business-case-appraisal, for solution-architecture\*\* \(high priority, serves 4 needs; broad: consider splitting\)\. description 3\n  - need 3\n  - need 1\n  - need 2\n  - need 4/);
+    assert.doesNotMatch(text, /description 1/);
+  });
+});
+
 describe('capability assessment, end to end', () => {
   const valid: CapabilityAssessment = {
     summary: 'Hosting is covered; residency compliance and cost comparability are not.',
     needs: [
-      { need: 'Hosting and data residency review', evidence: ['ev-1', 'ev-2'], coverage: 'covered', coveredBy: [{ agent: 'solution-architecture', skills: ['hosting-architecture-review'] }], priority: 'high' },
+      // What Claude Code sent for covered needs in the first real run: an empty "none" recommendation.
+      { need: 'Hosting and data residency review', evidence: ['ev-1', 'ev-2'], coverage: 'covered', coveredBy: [{ agent: 'solution-architecture', skills: ['hosting-architecture-review'] }], priority: 'high',
+        recommendation: { kind: 'none', id: '', agent: '', detail: '' } },
       { need: 'Comparable options appraisal', evidence: ['ev-2'], coverage: 'partial', coveredBy: [{ agent: 'solution-architecture', skills: ['solution-architecture-assessment'] }], priority: 'high',
         recommendation: { kind: 'new-skill', id: 'business-case-appraisal', agent: 'solution-architecture', detail: 'Check options are costed over equal periods.' } },
       { need: 'Legal compliance of data storage', evidence: ['ev-1'], coverage: 'gap', coveredBy: [], priority: 'medium',
         recommendation: { kind: 'new-agent', id: 'compliance', detail: 'Read-only agent tracing obligations to the design.' } },
+      { need: 'Cost the options over equal periods', evidence: ['ev-2'], coverage: 'gap', coveredBy: [], priority: 'low',
+        recommendation: { kind: 'new-skill', id: 'business-case-appraisal', agent: 'solution-architecture', detail: 'Same skill, second need.' } },
+      { need: 'Trace storage obligations to their clauses', evidence: ['ev-1'], coverage: 'gap', coveredBy: [], priority: 'medium',
+        recommendation: { kind: 'new-skill', id: 'obligation-traceability', agent: 'compliance', detail: 'Trace each obligation to the clause that imposes it.' } },
     ],
     classification: ['Contracts with the host may be confidential.'],
   };
@@ -126,12 +164,14 @@ describe('capability assessment, end to end', () => {
     const outcome = await t.assessor.assess({ user: 'local', scope: 'Assess the eForms modernisation.' });
     assert.equal(outcome.status, 'completed');
     assert.match(String((t.find('assessment.rejected')[0]!.data as Record<string, Json>).problems), /hosting-architecture-review is not an approved skill eligible for security/);
-    assert.deepEqual((t.find('assessment.completed')[0]!.data as Record<string, Json>).recommended, ['new-skill:business-case-appraisal', 'new-agent:compliance']);
+    assert.deepEqual((t.find('assessment.completed')[0]!.data as Record<string, Json>).recommended, ['new-skill:business-case-appraisal', 'new-agent:compliance', 'new-skill:obligation-traceability']);
 
     const report = readFileSync(outcome.reportPath!, 'utf8');
-    assert.match(report, /3 needs: 1 covered, 1 partly covered, 1 not covered/);
-    assert.match(report, /### New skills\n\n- \*\*business-case-appraisal, for solution-architecture\*\* \(high priority\)/);
-    assert.match(report, /### New agents\n\n- \*\*compliance\*\* \(medium priority\)/);
+    assert.match(report, /5 needs: 1 covered, 1 partly covered, 3 not covered/);
+    assert.match(report, /### New skills\n\n- \*\*business-case-appraisal, for solution-architecture\*\* \(high priority, serves 2 needs\)\. Check options are costed over equal periods\.\n  - Comparable options appraisal\n  - Cost the options over equal periods/);
+    assert.match(report, /- \*\*obligation-traceability, for compliance\*\*/);
+    assert.match(report, /### New agents\n\n- \*\*compliance\*\* \(medium priority, serves 1 need\)/);
+    assert.match(report, /\| Hosting and data residency review \| covered \| solution-architecture \(hosting-architecture-review\) \| — \|/);
     assert.match(report, /## Data classification\n\n- Contracts with the host may be confidential\./);
     assert.match(report, /Nothing in this report is approved/);
     assert.match(report, /\| ev-1 \| requirements\.md \| p10 \|/);
