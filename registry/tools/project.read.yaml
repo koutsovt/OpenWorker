@@ -1,5 +1,5 @@
 name: project.read
-description: Read the project memory of the current run - its objective, recorded decisions, results of completed tasks, open questions and the evidence gathered so far.
+description: Read the project memory of the current run - its objective, recorded decisions, open questions, the evidence gathered so far and an index of completed task results. Pass artefact (a task id from the index) to read that task's result in full.
 owner: platform
 action: read
 risk: low
@@ -8,5 +8,6 @@ limits:
   maxCallsPerSession: 10
 inputSchema:
   type: object
-  properties: {}
+  properties:
+    artefact: { type: string, description: 'Task id of a completed result to read in full, as listed in the artefacts index.' }
   additionalProperties: false
