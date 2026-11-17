@@ -100,10 +100,13 @@ which is simulated data written for the exercise. What happens:
 5. If the final verdict is `fail`, the run is held and no report is written. A user with the approver role can
    override with a reason; both are recorded and printed in the report. Approving your own run needs
    `allowSelfApproval` (see [Approvals and budgets](#approvals-and-budgets)).
-6. The Orchestrator writes the report from the results. The platform appends a traceability section it generates
-   itself: the assurance verdict and findings, the evidence register, models and usage per task, and approvals.
+6. The Orchestrator writes a short decision brief from the results: the answer, at most six key findings with their
+   evidence, recommendations, and decisions needed. The platform rejects a brief over the set lengths and sends it
+   back once. It then appends a condensed traceability section it generates itself: the verdict, independence,
+   critical and major findings, the cited evidence, prompt-injection flags, usage, approvals and the ledger head.
 
-The report is saved to `.state/reports/<run-id>.md`.
+The brief is saved to `.state/reports/<run-id>.md`. Beside it, `<run-id>-appendix.md` holds the detail: every planned
+task's final result, both assurance reviews in full, the evidence register and the work log per task.
 
 Known limits: there is one rework round; cost shows as unknown until prices are added to `config/models.yaml`.
 

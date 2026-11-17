@@ -31,12 +31,20 @@ const contracts = {
       task: text, severity: z.enum(['critical', 'major', 'minor']), issue: text, resolution: text,
     })),
   }),
+  /**
+   * A decision brief. Lengths are capped so the brief stays short; the full task results go in the
+   * appendix the platform writes beside it. Fields beyond these are accepted but not shown.
+   */
   report: z.looseObject({
-    title: text,
-    summary: text,
-    sections: z.array(z.looseObject({ heading: text, body: text, evidence: evidenceIds })).min(1),
-    recommendations: z.array(text),
-    openQuestions: z.array(text).optional(),
+    title: text.max(150, 'title: at most 150 characters'),
+    answer: text.max(1200, 'answer: at most 1,200 characters (about 200 words)'),
+    findings: z.array(z.looseObject({
+      heading: text.max(100, 'heading: at most 100 characters'),
+      point: text.max(500, 'point: at most 500 characters (two or three sentences)'),
+      evidence: evidenceIds,
+    })).min(1).max(6, 'findings: at most 6'),
+    recommendations: z.array(text.max(300, 'recommendation: at most 300 characters, one sentence')).min(1).max(7, 'recommendations: at most 7'),
+    decisionsNeeded: z.array(text.max(300, 'decision: at most 300 characters, one sentence')).max(7, 'decisionsNeeded: at most 7'),
   }),
   /**
    * Capability assessment: what a body of work needs, set against the approved agents and skills. The registry
@@ -93,10 +101,10 @@ export interface CapabilityAssessment {
 
 export interface ReportResult {
   title: string;
-  summary: string;
-  sections: { heading: string; body: string; evidence: string[] }[];
+  answer: string;
+  findings: { heading: string; point: string; evidence: string[] }[];
   recommendations: string[];
-  openQuestions?: string[];
+  decisionsNeeded: string[];
 }
 
 /** What a result must look like, in words the agent can act on. */
@@ -104,7 +112,7 @@ export const CONTRACT_SHAPES: Record<ContractName, string> = {
   'evidence-pack': '{"summary": string, "claims": [{"statement": string, "evidence": [evidence id, at least one]}], "gaps": [string]}',
   analysis: '{"summary": string, "claims": [{"statement": string, "evidence": [evidence ids; empty if you have none]}], "assumptions": [string], "openQuestions": [string]} — you may add further fields for your subject, such as options, threats, controls, entities or costs',
   assurance: '{"verdict": "pass" | "conditional" | "fail", "summary": string, "findings": [{"task": id of the task the finding is about, "severity": "critical" | "major" | "minor", "issue": string, "resolution": string}]}',
-  report: '{"title": string, "summary": string, "sections": [{"heading": string, "body": string, "evidence": [evidence ids]}], "recommendations": [string], "openQuestions": [string]}',
+  report: '{"title": string (at most 150 characters), "answer": string (the bottom line, at most 1,200 characters), "findings": [{"heading": string (at most 100), "point": string (at most 500), "evidence": [evidence ids]}] (1 to 6), "recommendations": [string, one sentence each, at most 300 characters] (1 to 7), "decisionsNeeded": [string, one sentence each, at most 300 characters] (at most 7)}',
   'capability-assessment': '{"summary": string, "needs": [{"need": string, "evidence": [evidence ids, at least one], "coverage": "covered" | "partial" | "gap", "coveredBy": [{"agent": approved agent id, "skills": [ids from that agent\'s eligible skills]}], "priority": "high" | "medium" | "low", "recommendation": {"kind": "none" | "new-skill" | "extend-agent" | "new-agent", "id": new skill or agent id, or the existing skill to add, "agent": agent the skill is for or the agent to extend, "detail": string}}], "classification": [data classification concerns, as strings]}',
 };
 

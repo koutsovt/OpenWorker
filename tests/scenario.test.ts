@@ -100,15 +100,26 @@ describe('research ethics eforms scenario, end to end', () => {
     assert.deepEqual(reviewer.skills.map((s) => s.id), ['evidence-verification', 'independent-solution-assurance', 'requirements-traceability']);
     assert.equal(t.find('skill.loaded').length, 1);
 
+    // The brief: the report task's answer, findings and recommendations, then condensed traceability.
     const report = readFileSync(t.orchestrator.reportPath(runId)!, 'utf8');
     for (const expected of [
-      '# Research Ethics eForms Modernisation: assessment', 'Assurance verdict: **pass**', 'Evidence: ev-1, ev-2',
-      '| ev-2 | hosting-costs.md | p9 |', 'One rework round was run for: architecture, costs. First verdict was conditional.',
-      'reviewed on provider OpenAI, different from every authoring provider', '| minor | costs |',
-      '| architecture-rework | solution-architecture | platform | claude-author |', 'plan approved by user:local',
-    ]) assert.ok(report.includes(expected), `report is missing: ${expected}`);
-    // Every id the report cites is in the evidence register.
-    for (const id of report.match(/ev-\d+/g) ?? []) assert.ok(evidence.some((e) => e.id === id), id);
+      '# Research Ethics eForms Modernisation: assessment', 'Assurance verdict: **pass**', `Full detail: \`${runId}-appendix.md\``,
+      '## Answer', '**Target architecture.** Residency is unmet on the managed host as described. _(ev-1, ev-2)_',
+      '## Decisions needed', '- hosting-costs.md: p9 (ev-2)', 'One rework round was run for: architecture, costs. First verdict was conditional.',
+      'reviewed on provider OpenAI, different from every authoring provider', 'Open findings: 0 critical, 0 major, 1 minor.', 'plan approved by user:local',
+    ]) assert.ok(report.includes(expected), `brief is missing: ${expected}`);
+    // Minor findings and the full work log are in the appendix, not the brief.
+    assert.ok(!report.includes('| minor | costs |'));
+    // The appendix: every planned task's final result, the full review, the evidence register and the work log.
+    const appendix = readFileSync(t.orchestrator.appendixPath(runId)!, 'utf8');
+    for (const expected of [
+      '## Task results', '### evidence (research)', '### architecture (solution-architecture, revised after review)', '### costs (',
+      '## Independent assurance', '### Final review: pass', '### First review: conditional', '| minor | costs |',
+      '## Evidence register', '| ev-2 | hosting-costs.md | p9 |', '| architecture-rework | solution-architecture | platform | claude-author |',
+    ]) assert.ok(appendix.includes(expected), `appendix is missing: ${expected}`);
+    // Every id the brief or the appendix cites is in the evidence register.
+    for (const id of `${report}${appendix}`.match(/ev-\d+/g) ?? []) assert.ok(evidence.some((e) => e.id === id), id);
+    assert.deepEqual(Object.keys(t.find('report.written')[0]!.data as object).sort(), ['appendixDigest', 'digest', 'run']);
     if (process.env.SHOW_REPORT) (await import('node:fs')).writeFileSync(process.env.SHOW_REPORT, report);
     assert.equal(t.find('report.written').length, 1);
     assert.equal(t.ledger.verify().ok, true);

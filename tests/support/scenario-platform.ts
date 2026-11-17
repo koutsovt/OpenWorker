@@ -80,12 +80,12 @@ export function script(model: string, n: number, input: string): FakeStep {
         ? submit({ verdict: 'fail', summary: 'Still no verification of migrated records.', findings: [{ task: 'data-rework', severity: 'critical', issue: 'Unchanged.', resolution: 'Define reconciliation.' }] })
         : submit({ verdict: 'pass', summary: 'The contradicted claim was corrected.', findings: [{ task: 'costs', severity: 'minor', issue: 'Cost claim cites no evidence.', resolution: 'Cite the price assumptions.' }] })];
       case 'report': return [submit({
-        title: 'Research Ethics eForms Modernisation: assessment', summary: 'Laravel and PostgreSQL are viable; hosting location is unresolved.',
-        sections: [
-          { heading: 'Target architecture', body: 'Residency is unmet on the managed host as described.', evidence: ['ev-1', 'ev-2'] },
-          { heading: 'PRIME integration', body: 'Keep the nightly batch in the first release.', evidence: ['ev-3'] },
+        title: 'Research Ethics eForms Modernisation: assessment', answer: 'Laravel and PostgreSQL are viable; hosting location is unresolved.',
+        findings: [
+          { heading: 'Target architecture', point: 'Residency is unmet on the managed host as described.', evidence: ['ev-1', 'ev-2'] },
+          { heading: 'PRIME integration', point: 'Keep the nightly batch in the first release.', evidence: ['ev-3'] },
         ],
-        recommendations: ['Resolve data residency before choosing the host.'], openQuestions: ['How many approvals are missing from PRIME?'],
+        recommendations: ['Resolve data residency before choosing the host.'], decisionsNeeded: ['How many approvals are missing from PRIME?'],
       })];
       default: return [];
     }

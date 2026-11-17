@@ -247,7 +247,8 @@ if (command === 'verify-ledger' || command === 'anchor-ledger') {
       }
       report(summary);
       const path = orchestrator.reportPath(runId);
-      if (summary.status === 'completed' && path) console.log(`\nFinal report: ${path}\n\n${readFileSync(path, 'utf8')}`);
+      if (summary.status === 'completed' && path)
+        console.log(`\nFinal report: ${path}\nAppendix (task results, full review, evidence register): ${orchestrator.appendixPath(runId)}\n\n${readFileSync(path, 'utf8')}`);
       if (summary.status === 'held') console.log(`\nHeld by assurance. An approver can override with: npm run resume -- ${runId}`);
       process.exitCode = summary.status === 'completed' ? 0 : 1;
     }
