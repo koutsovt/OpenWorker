@@ -163,7 +163,7 @@ describe('ledger head', () => {
     db.close();
     const reopened = new AuditLedger(path);
     assert.equal(reopened.verify().ok, true);
-    assert.deepEqual(reopened.verify(kept), { ok: false, brokenAt: 3, reason: 'does not contain the expected head' });
+    assert.deepEqual(reopened.verify(kept), { ok: false, brokenAt: 3, reason: 'anchor at record 3: the ledger no longer has that record' });
   });
 
   it('adopts the last record as head for a ledger written before the head table', () => {

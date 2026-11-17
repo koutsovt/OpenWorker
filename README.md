@@ -91,7 +91,8 @@ which is simulated data written for the exercise. What happens:
    and every evidence id it cites must be a passage an agent actually read in this run; otherwise it is sent back once.
 3. The Assurance agent reviews all results. It runs under a different model policy (OpenAI) than the authors (Claude).
    A plan cannot assign the Assurance agent or skip it: the platform schedules it.
-4. Tasks with a critical or major finding are reworked by their authors, once, and Assurance reviews again.
+4. Tasks with a critical or major finding are reworked by their authors, once. Tasks built on a reworked result
+   are redone after it. Assurance then reviews again.
 5. If the final verdict is `fail`, the run is held and no report is written. A user with the approver role can
    override with a reason; both are recorded and printed in the report. Approving your own run needs
    `allowSelfApproval` (see [Approvals and budgets](#approvals-and-budgets)).
@@ -100,8 +101,7 @@ which is simulated data written for the exercise. What happens:
 
 The report is saved to `.state/reports/<run-id>.md`.
 
-Known limits: a rework does not re-run tasks that depended on the reworked one; there is one rework round;
-cost shows as unknown until prices are added to `config/models.yaml`.
+Known limits: there is one rework round; cost shows as unknown until prices are added to `config/models.yaml`.
 
 ## Orchestrate an objective
 
@@ -207,11 +207,15 @@ run) is refused unless `allowSelfApproval: true` is set in `config/policies.yaml
 proof of concept has a single local user; set it to `false` once there is a second approver. Every approval in the
 ledger says whether it was a self-approval.
 
-Budgets (`maxModelCalls`, `maxTokens`, `maxCostUsd`, `maxSeconds`) apply to planning and to each execution of a
-run as a whole: every task of the run is charged to one budget, including attempts on a model that failed before a
-fallback, and no task starts once the budget is used up. The calls left in the budget cap each session's model-call
-limit, and the time limit also covers waiting for an approval. Tokens and cost cannot be stopped partway through a
-session, because engines report usage only when a turn ends. A resumed run starts a fresh budget.
+`config/budgets.yaml` sets two kinds of limit. `task` limits (`maxSeconds`, and optionally `maxModelCalls`,
+`maxTokens`, `maxCostUsd`) apply to each task attempt and to planning; a task that reaches one is stopped and its
+output withheld, and the time limit also covers waiting for an approval. `run` limits (`maxModelCalls`, `maxTokens`,
+`maxCostUsd`) apply across every task of one run and are counted from the audit ledger, so they hold across a restart.
+When one is reached no further task starts, the tasks not started are marked `blocked`, and the run ends as failed;
+tasks already running finish and keep their results. Every attempt is charged, including attempts on a model that
+failed before a fallback, and the calls left in a budget cap each session's model-call limit. Tokens and cost cannot
+be stopped partway through a session, because engines report usage only when a turn ends. A cost limit with no prices
+set in `config/models.yaml` cannot be measured, so it counts as reached.
 
 ## The registry
 
@@ -255,14 +259,31 @@ Every model selection, fallback and usage figure is written to the audit ledger 
 npm run verify-ledger
 ```
 
-This checks the hash chain and that no records were removed from the end. Someone who can edit the database could
-rewrite both, so keep the ledger head somewhere else: the final report prints it as `<seq>:<hash>`, and
+This checks the hash chain and that no records were removed from the end. Someone who can rewrite the whole file can
+rebuild the chain, so record the ledger's head somewhere this machine's users cannot rewrite (another account, a
+write-once bucket, a printed line) and check against it later. Either append it to an anchor file:
+
+```bash
+npm run anchor-ledger -- /path/outside/this/machine/anchors.jsonl
+```
+
+```bash
+npm run verify-ledger -- /path/outside/this/machine/anchors.jsonl
+```
+
+or check the single head a final report prints, as `<seq>:<hash>`:
 
 ```bash
 npm run verify-ledger -- <seq>:<hash>
 ```
 
-fails if the ledger no longer contains that record.
+`WORKFORCE_ANCHOR_FILE` sets a default anchor file. Either check fails if the ledger no longer holds the anchored record.
+
+## Container
+
+A `Dockerfile` is included for the Railway stage. **It has not been built or run.** Its build runs the full test
+suite inside the image, which is the check that the OpenWorker runtime works there. Hosted use needs API-key
+providers only, and there is no authenticated HTTP entry point yet, so today the image can only run the command line.
 
 ## Rules of the codebase
 

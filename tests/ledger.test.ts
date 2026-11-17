@@ -51,3 +51,25 @@ describe('audit ledger', () => {
     assert.equal(tamper(`UPDATE audit SET hash = '${'a'.repeat(64)}' WHERE seq = 1`).ok, false);
   });
 });
+
+describe('ledger anchors', () => {
+  it('catches a ledger that was rewritten from scratch with a valid chain', () => {
+    const path = newPath();
+    const original = new AuditLedger(path);
+    original.append('plan.approved', 'user:alice', { run: 'run-1' });
+    original.append('tool.denied', 'agent:x', { tool: 'ops.write' });
+    const anchor = original.head();
+    original.append('run.finished', 'user:alice', { run: 'run-1' });
+    assert.deepEqual(original.checkAnchors([anchor]), []);
+    original.close();
+
+    // Someone with the file drops the denial and rebuilds every hash. The chain alone looks fine.
+    new DatabaseSync(path).exec('DELETE FROM audit');
+    const forged = new AuditLedger(path);
+    forged.append('plan.approved', 'user:alice', { run: 'run-1' });
+    forged.append('run.finished', 'user:alice', { run: 'run-1' });
+    assert.equal(forged.verify().ok, true);
+    assert.match(forged.checkAnchors([anchor]).join(), /record 2: the ledger holds a different record than was anchored/);
+    assert.match(forged.checkAnchors([{ seq: 9, hash: anchor.hash }]).join(), /no longer has that record/);
+  });
+});

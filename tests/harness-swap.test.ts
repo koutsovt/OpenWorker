@@ -60,7 +60,7 @@ describe('harness swap', () => {
 
   it('completes on the fake harness, as the baseline', () => {
     assert.equal(baseline.status, 'completed');
-    assert.equal(baseline.tasks.length, 9);
+    assert.equal(baseline.tasks.length, 10);
     assert.equal(baseline.reportWritten, true);
   });
 

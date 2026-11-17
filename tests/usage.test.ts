@@ -39,8 +39,8 @@ describe('cost and usage report', () => {
     const runId = await t.start();
     await t.orchestrator.execute(runId);
     const report = usageReport(t.ledger.records(), { runId });
-    assert.deepEqual(report.byTask!.map((r) => r.key).sort(), ['architecture', 'architecture-rework', 'assurance', 'assurance-2', 'costs', 'data', 'evidence', 'report', 'security']);
-    assert.deepEqual(report.byModel.map((r) => [r.key, r.sessions]), [['claude-author', 7], ['openai-assurance', 2]]);
+    assert.deepEqual(report.byTask!.map((r) => r.key).sort(), ['architecture', 'architecture-rework', 'assurance', 'assurance-2', 'costs', 'costs-rework', 'data', 'evidence', 'report', 'security']);
+    assert.deepEqual(report.byModel.map((r) => [r.key, r.sessions]), [['claude-author', 8], ['openai-assurance', 2]]);
     // The planner ran before the run existed, so it is outside the run's total but inside the ledger's.
     assert.equal(usageReport(t.ledger.records()).total.sessions, report.total.sessions + 1);
     assert.equal(report.total.unpriced, report.total.sessions);

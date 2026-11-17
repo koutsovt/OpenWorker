@@ -16,4 +16,4 @@ Stage 1 is a Node process with SQLite files. Stage 2 is one Railway service, one
 - One replica only: the ledger and run store are single-writer. Scaling out requires PostgreSQL first.
 - The OpenWorker runtime ignores HTTP proxy settings. A network with a mandatory outbound proxy needs the relay in `scripts/proxy-relay.ts` or a gateway.
 - Railway is a commercial host; everything deployed on it is open source and portable.
-- Not done: no container image has been built or run. Docker was not usable in the build environment, so this stage is a design, not a qualified deployment.
+- Not done: a `Dockerfile` exists but no image has been built or run, because Docker was not usable in the build environment. Its build runs the test suite, so the first build is the qualification.

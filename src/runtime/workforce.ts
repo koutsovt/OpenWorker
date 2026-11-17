@@ -49,8 +49,9 @@ export interface AgentRunRequest {
   approver?: Approver;
   budget?: Budget;
   /**
-   * A budget shared with other runs, for example every task of one orchestrated run. Takes
-   * precedence over `budget`. Each run is charged to it, and none starts once it is used up.
+   * A budget shared with other runs, for example every task of one orchestrated run, applied as well
+   * as `budget`. This run is charged to it and does not start once it is used up; reaching it during
+   * the run does not withhold this run's output.
    */
   tracker?: BudgetTracker;
   /** The orchestrated run and task this instance belongs to. */
@@ -170,16 +171,18 @@ export class Workforce {
       run: request.run?.runId ?? null, task: request.run?.taskId ?? null,
     });
 
-    const budget = request.tracker ?? new BudgetTracker(request.budget ?? {});
+    const budget = new BudgetTracker(request.budget ?? {});
+    const trackers = request.tracker ? [budget, request.tracker] : [budget];
     // Nothing starts on a budget that is already used up.
-    const spent = budget.exceeded();
+    const spent = trackers.map((t) => t.exceeded()).find(Boolean);
     if (spent) {
       ledger.append('budget.exceeded', actor, { instance: instance.id, limit: spent, before: 'start' });
       this.instances.delete(instance.id);
       return { instance: instance.id, status: 'budget_exceeded', output: null, failure: spent, model: '', tried: [], sideEffects: false };
     }
-    // The engine stops the session at its model-call limit, so the remaining call budget becomes that limit.
-    const callsLeft = budget.budget.maxModelCalls === undefined ? undefined : budget.budget.maxModelCalls - budget.modelCalls;
+    // The engine stops the session at its model-call limit, so the fewest calls left in any budget becomes that limit.
+    const left = trackers.flatMap((t) => (t.budget.maxModelCalls === undefined ? [] : [t.budget.maxModelCalls - t.modelCalls]));
+    const callsLeft = left.length ? Math.min(...left) : undefined;
     const limits = agent.limits && callsLeft !== undefined
       ? { ...agent.limits, maxModelCalls: Math.max(1, Math.min(agent.limits.maxModelCalls, callsLeft)) }
       : agent.limits;
@@ -200,7 +203,8 @@ export class Workforce {
         approve: (approval) => this.decide(approval, instance, request.approver),
       });
       // Every attempt is charged, including those on a model that failed before a fallback.
-      for (const attempt of outcome.attempts) budget.charge(attempt.usage, gateway.cost(attempt.model, attempt.usage));
+      for (const attempt of outcome.attempts)
+        for (const tracker of trackers) tracker.charge(attempt.usage, gateway.cost(attempt.model, attempt.usage));
       const breach = outcome.result.failure?.category === 'timeout' ? 'time' : budget.exceeded();
       if (breach) ledger.append('budget.exceeded', actor, { instance: instance.id, limit: breach });
       return {
