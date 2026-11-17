@@ -8,7 +8,7 @@ agents:
   security@1: 86474dd5e2cab346a0087cda63cd8ab05dcbd8403def8eeb7d4fd6d932b78839
   solution-architecture@1: 31996ec77173c17bc2f38a9178b236adefe21fb4e570c55ca89b38300946b4b1
 skills:
-  capability-gap-analysis@1.0.0: 591098704daca62a493c5cf91878778dcdbcde847d56e34879707234588ac100
+  capability-gap-analysis@1.1.0: 60014706217c26a0723204f64004a49645a777e6bca0f4c6dad416fc7350e604
   evidence-verification@1.0.0: a344b3b83ce446647cea847ba26a8e67e3bd1c29192e2f1ae780e067a181fe9f
   hosting-architecture-review@1.0.0: c20d01757422cdd84fae4f900e292890957d938611291914a3bf3704e418e6ff
   independent-solution-assurance@1.0.0: da82a3aa7ca5e80cb41c91ce45f9534b851ffbf377e2e362c61817a4daf0a36a

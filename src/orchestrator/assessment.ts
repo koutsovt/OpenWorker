@@ -12,7 +12,7 @@ import type { EvidenceRecord, EvidenceStore } from '../memory/state.ts';
 import { RegistryError, type Registry } from '../registry/registry.ts';
 import type { Workforce } from '../runtime/workforce.ts';
 import type { ResultInbox } from '../tools/result.ts';
-import { checkResult, CONTRACT_SHAPES, type CapabilityAssessment, type CapabilityNeed } from './contracts.ts';
+import { checkResult, CONTRACT_SHAPES, parseAssessment, type CapabilityAssessment, type CapabilityNeed } from './contracts.ts';
 
 const RESULT_TOOL = 'result.submit';
 const TASK = 'assessment';
@@ -38,6 +38,12 @@ export function checkAssessment(result: CapabilityAssessment, registry: Registry
   const usable = (id: string) => {
     try { return registry.agent(id); } catch (e) { if (e instanceof RegistryError) return undefined; throw e; }
   };
+
+  // A new agent is only usable with a method: each must have at least one skill recommended for it.
+  for (const agent of newAgents) {
+    const skilled = result.needs.some((n) => (n.recommendation?.kind === 'new-skill' || n.recommendation?.kind === 'extend-agent') && n.recommendation.agent === agent);
+    if (!skilled) problems.push(`new agent ${agent} has no skill: recommend at least one new-skill (or extend-agent) with "agent": "${agent}", as its own entry`);
+  }
 
   result.needs.forEach((need, i) => {
     const where = `needs.${i} (${need.need.slice(0, 60)})`;
@@ -68,8 +74,8 @@ export function checkAssessment(result: CapabilityAssessment, registry: Registry
       if (registry.knows('agent', rec.id)) problems.push(`${where}: agent ${rec.id} already exists; recommend extend-agent instead, or choose a new id`);
     } else {
       const agent = rec.agent ? usable(rec.agent) : undefined;
-      if (!agent) problems.push(`${where}: extend-agent must name an approved agent in "agent"`);
-      else if (agent.eligibleSkills.includes(rec.id)) problems.push(`${where}: ${rec.agent} is already eligible for ${rec.id}`);
+      if (!agent && !(rec.agent && newAgents.has(rec.agent))) problems.push(`${where}: extend-agent must name an approved agent, or a new agent recommended here, in "agent"`);
+      else if (agent?.eligibleSkills.includes(rec.id)) problems.push(`${where}: ${rec.agent} is already eligible for ${rec.id}`);
       if (!newSkills.has(rec.id) && !registry.knows('skill', rec.id)) problems.push(`${where}: ${rec.id} is neither an existing skill nor a new skill recommended here`);
     }
   });
@@ -109,14 +115,15 @@ export class CapabilityAssessor {
       }
       problems = submitted === undefined ? [`no result was submitted; call ${RESULT_TOOL}`]
         : checkResult('capability-assessment', submitted, { evidenceIds: new Set(evidence.list(assessmentId).map((e) => e.id)), taskIds: new Set() });
-      if (!problems.length) problems = checkAssessment(submitted as unknown as CapabilityAssessment, registry);
-      if (!problems.length) {
-        const result = submitted as unknown as CapabilityAssessment;
+      const parsed = problems.length ? undefined : parseAssessment(submitted!);
+      if (parsed) problems = checkAssessment(parsed, registry);
+      if (parsed && !problems.length) {
+        const result = parsed;
         const reportPath = this.write(assessmentId, request, result, evidence.list(assessmentId));
         ledger.append('assessment.completed', actor, {
           run: assessmentId, instance: outcome.instance, attempt,
           needs: result.needs.length, gaps: result.needs.filter((n) => n.coverage === 'gap').length, partial: result.needs.filter((n) => n.coverage === 'partial').length,
-          recommended: result.needs.flatMap((n) => (n.recommendation && n.recommendation.kind !== 'none' ? [`${n.recommendation.kind}:${n.recommendation.id}`] : [])),
+          recommended: [...new Set(result.needs.flatMap((n) => (n.recommendation && n.recommendation.kind !== 'none' ? [`${n.recommendation.kind}:${n.recommendation.id}`] : [])))],
           resultDigest: createHash('sha256').update(JSON.stringify(result)).digest('hex').slice(0, 16),
         });
         return { assessmentId, status: 'completed', result, problems: [], ...(reportPath ? { reportPath } : {}) };
@@ -159,7 +166,8 @@ export class CapabilityAssessor {
       'Assess what the work described below needs, against the approved agents and skills in the catalogue. Do not do the work itself.',
       'Read the knowledge documents for the work: search, then read the passages with knowledge.read. Only a passage you have read gives you an evidence id, and every need must cite at least one.',
       'List the distinct capabilities the work needs (kinds of analysis, design or checking), not its individual requirements. For each, say whether an approved agent with one of its eligible skills covers it fully (covered), in part (partial), or not at all (gap), and name that agent and those skills.',
-      'For every partial or gap, recommend the smallest change: a new skill for an existing agent (new-skill, with "agent"), an existing skill given to another agent (extend-agent), or a new agent (new-agent) only when no existing agent\'s purpose fits. Say in "detail" what the skill or agent must do, and for a new agent which skills and read tools it needs.',
+      'For every partial or gap, recommend the smallest change: a new skill for an existing agent (new-skill, with "agent"), an existing skill given to another agent (extend-agent), or a new agent (new-agent) only when no existing agent\'s purpose fits. Say in "detail" what the skill or agent must do, and for a new agent which read tools it needs. Omit "recommendation" for a covered need.',
+      'A new agent needs a method: also recommend each of its skills as its own need entry with kind new-skill and "agent" set to the new agent\'s id. Keep each skill to one coherent method; if one skill would serve more than three needs, split it.',
       'In "classification", list any document or kind of data the work needs that is likely above the agents\' data classification ceilings or the tools\' classification.',
       `Hand back your result by calling ${RESULT_TOOL} with {"result": {...}}. The result must have this shape: ${CONTRACT_SHAPES['capability-assessment']}`,
       'The platform checks every agent, skill and id you name against the registry. A person reviews your recommendations; nothing you recommend exists until they approve it.',
@@ -186,14 +194,14 @@ export function renderAssessment(input: {
   const count = (c: CapabilityNeed['coverage']) => needs.filter((n) => n.coverage === c).length;
   const by = (n: CapabilityNeed) => (n.coveredBy ?? []).map((c) => `${c.agent}${c.skills.length ? ` (${c.skills.join(', ')})` : ''}`).join('; ') || '—';
 
-  // One entry per recommended change, with every need it would serve.
-  const changes = new Map<string, { kind: string; id: string; agent?: string; details: string[]; needs: string[]; priority: CapabilityNeed['priority'] }>();
+  // One entry per recommended change, with every need it would serve. Needs are in priority order, so the
+  // description shown is the one written for the most important need; the others are usually restatements.
+  const changes = new Map<string, { kind: string; id: string; agent?: string; detail: string; needs: string[]; priority: CapabilityNeed['priority'] }>();
   for (const n of needs) {
     const rec = n.recommendation;
     if (!rec || rec.kind === 'none' || !rec.id) continue;
     const key = `${rec.kind}:${rec.id}:${rec.agent ?? ''}`;
-    const entry = changes.get(key) ?? { kind: rec.kind, id: rec.id, ...(rec.agent ? { agent: rec.agent } : {}), details: [], needs: [], priority: n.priority };
-    if (!entry.details.includes(rec.detail)) entry.details.push(rec.detail);
+    const entry = changes.get(key) ?? { kind: rec.kind, id: rec.id, ...(rec.agent ? { agent: rec.agent } : {}), detail: rec.detail ?? '', needs: [], priority: n.priority };
     entry.needs.push(n.need);
     if (PRIORITY[n.priority] < PRIORITY[entry.priority]) entry.priority = n.priority;
     changes.set(key, entry);
@@ -201,8 +209,8 @@ export function renderAssessment(input: {
   const section = (kind: string, heading: string, label: (c: { id: string; agent?: string }) => string) => {
     const list = [...changes.values()].filter((c) => c.kind === kind).sort((a, b) => PRIORITY[a.priority] - PRIORITY[b.priority]);
     return list.length ? ['', `### ${heading}`, '', ...list.flatMap((c) => [
-      `- **${label(c)}** (${c.priority} priority). ${c.details.join(' ')}`,
-      `  Serves: ${c.needs.join('; ')}.`,
+      `- **${label(c)}** (${c.priority} priority, serves ${c.needs.length} ${c.needs.length === 1 ? 'need' : 'needs'}${c.kind === 'new-skill' && c.needs.length > 3 ? '; broad: consider splitting' : ''}). ${c.detail}`,
+      ...c.needs.map((n) => `  - ${n}`),
     ])] : [];
   };
 
@@ -215,7 +223,7 @@ export function renderAssessment(input: {
     '',
     '## Summary', '', result.summary,
     '', '## Coverage', '',
-    table(['Need', 'Coverage', 'Covered by', 'Priority', 'Evidence'], needs.map((n) => [n.need, n.coverage, by(n), n.priority, n.evidence.join(', ')])),
+    table(['Need', 'Coverage', 'Covered by', 'Change', 'Priority', 'Evidence'], needs.map((n) => [n.need, n.coverage, by(n), n.recommendation?.id ?? '—', n.priority, n.evidence.join(', ')])),
     '', '## Recommended changes',
     ...(changes.size ? [
       ...section('new-skill', 'New skills', (c) => `${c.id}${c.agent ? `, for ${c.agent}` : ''}`),

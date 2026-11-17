@@ -1,6 +1,6 @@
 id: capability-gap-analysis
 version: 1.0.0
-status: approved
+status: retired
 owner: architecture-practice
 purpose: Set what a body of work needs against the approved agents and skills, and recommend the smallest additions that would cover the gaps.
 scope: Any new kind of work before it is planned on the platform. Not an assessment of the work itself.

@@ -9,6 +9,9 @@ const text = z.string().trim().min(1);
 const evidenceIds = z.array(z.string().regex(/^ev-\d+$/, 'evidence ids look like ev-12'));
 
 const claim = z.looseObject({ statement: text, evidence: evidenceIds });
+const blankToUndefined = (v: unknown) => (typeof v === 'string' && !v.trim() ? undefined : v);
+const noRecommendation = (v: unknown) =>
+  v === null || (typeof v === 'object' && !Array.isArray(v) && ((v as { kind?: unknown }).kind === 'none' || !(v as { kind?: unknown }).kind)) ? undefined : v;
 
 const contracts = {
   /** Research: every finding must cite at least one evidence record. */
@@ -58,14 +61,15 @@ const contracts = {
       coverage: z.enum(['covered', 'partial', 'gap']),
       coveredBy: z.array(z.looseObject({ agent: text, skills: z.array(text) })).default([]),
       priority: z.enum(['high', 'medium', 'low']),
-      recommendation: z.looseObject({
-        kind: z.enum(['none', 'new-skill', 'extend-agent', 'new-agent']),
+      // Models fill every field of a covered need's recommendation with "" or kind "none"; that means no recommendation.
+      recommendation: z.preprocess(noRecommendation, z.looseObject({
+        kind: z.enum(['new-skill', 'extend-agent', 'new-agent']),
         /** The skill or agent to create, or the skill to add to an existing agent. */
-        id: text.optional(),
+        id: text,
         /** The agent the skill is for, or the agent to extend. */
-        agent: text.optional(),
+        agent: z.preprocess(blankToUndefined, text.optional()),
         detail: text,
-      }).optional(),
+      }).optional()),
     })).min(1).max(40),
     classification: z.array(text).optional(),
   }),
@@ -90,7 +94,8 @@ export interface CapabilityNeed {
   coverage: 'covered' | 'partial' | 'gap';
   coveredBy: { agent: string; skills: string[] }[];
   priority: 'high' | 'medium' | 'low';
-  recommendation?: { kind: 'none' | 'new-skill' | 'extend-agent' | 'new-agent'; id?: string; agent?: string; detail: string };
+  /** Absent, null or kind "none" all mean no change is recommended. */
+  recommendation?: { kind: 'none' | 'new-skill' | 'extend-agent' | 'new-agent'; id?: string; agent?: string; detail?: string } | null;
 }
 
 export interface CapabilityAssessment {
@@ -113,8 +118,13 @@ export const CONTRACT_SHAPES: Record<ContractName, string> = {
   analysis: '{"summary": string, "claims": [{"statement": string, "evidence": [evidence ids; empty if you have none]}], "assumptions": [string], "openQuestions": [string]} — you may add further fields for your subject, such as options, threats, controls, entities or costs',
   assurance: '{"verdict": "pass" | "conditional" | "fail", "summary": string, "findings": [{"task": id of the task the finding is about, "severity": "critical" | "major" | "minor", "issue": string, "resolution": string}]}',
   report: '{"title": string (at most 150 characters), "answer": string (the bottom line, at most 1,200 characters), "findings": [{"heading": string (at most 100), "point": string (at most 500), "evidence": [evidence ids]}] (1 to 6), "recommendations": [string, one sentence each, at most 300 characters] (1 to 7), "decisionsNeeded": [string, one sentence each, at most 300 characters] (at most 7)}',
-  'capability-assessment': '{"summary": string, "needs": [{"need": string, "evidence": [evidence ids, at least one], "coverage": "covered" | "partial" | "gap", "coveredBy": [{"agent": approved agent id, "skills": [ids from that agent\'s eligible skills]}], "priority": "high" | "medium" | "low", "recommendation": {"kind": "none" | "new-skill" | "extend-agent" | "new-agent", "id": new skill or agent id, or the existing skill to add, "agent": agent the skill is for or the agent to extend, "detail": string}}], "classification": [data classification concerns, as strings]}',
+  'capability-assessment': '{"summary": string, "needs": [{"need": string, "evidence": [evidence ids, at least one], "coverage": "covered" | "partial" | "gap", "coveredBy": [{"agent": approved agent id, "skills": [ids from that agent\'s eligible skills]}], "priority": "high" | "medium" | "low", "recommendation": omit when covered; otherwise {"kind": "new-skill" | "extend-agent" | "new-agent", "id": new skill or agent id, or the existing skill to add, "agent": agent the skill is for or the agent to extend, "detail": string}}], "classification": [data classification concerns, as strings]}',
 };
+
+/** An assessment as the contract reads it: blank or "none" recommendations removed, missing lists defaulted. Call after `checkResult` passes. */
+export function parseAssessment(result: Json): CapabilityAssessment {
+  return contracts['capability-assessment'].parse(result) as unknown as CapabilityAssessment;
+}
 
 /** Every evidence id cited anywhere in a result: any `evidence` list, at any depth. */
 export function citedEvidence(value: Json | undefined): string[] {
