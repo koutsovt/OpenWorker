@@ -14,8 +14,16 @@ export interface PlannedTask {
   dependsOn: string[];
 }
 
+/** Part of the objective that no approved agent or skill fits, as the planner judged it. */
+export interface UncoveredNeed {
+  need: string;
+  reason: string;
+}
+
 export interface Plan {
   tasks: PlannedTask[];
+  /** What the plan leaves undone because nothing in the catalogue covers it. Shown to the approver and carried into the report. */
+  uncovered?: UncoveredNeed[];
 }
 
 export class PlanError extends Error {
@@ -26,7 +34,7 @@ export class PlanError extends Error {
   }
 }
 
-export const PLAN_LIMITS = { maxTasks: 12, maxObjectiveChars: 4000 };
+export const PLAN_LIMITS = { maxTasks: 12, maxObjectiveChars: 4000, maxUncovered: 10, maxUncoveredChars: 500 };
 const TASK_ID = /^[a-z][a-z0-9-]{0,31}$/;
 /** Ids the platform uses for the stages it adds after the planned work. */
 export const STAGE = { assurance: 'assurance', reassurance: 'assurance-2', report: 'report', rework: (id: string) => `${id}-rework` };
@@ -43,6 +51,7 @@ export function parsePlan(raw: Json | undefined): { plan: Plan; problems: string
   const problems: string[] = [];
   const list = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw.tasks : undefined;
   if (!Array.isArray(list)) return { plan: { tasks: [] }, problems: ['plan must be an object with a `tasks` list'] };
+  const uncovered = parseUncovered((raw as Record<string, Json>).uncovered, problems);
   const tasks: PlannedTask[] = [];
   list.forEach((item, i) => {
     const t = (item && typeof item === 'object' && !Array.isArray(item) ? item : {}) as Record<string, unknown>;
@@ -59,7 +68,25 @@ export function parsePlan(raw: Json | undefined): { plan: Plan; problems: string
       skills: skills ?? [], dependsOn: [...new Set(dependsOn ?? [])],
     });
   });
-  return { plan: { tasks }, problems };
+  return { plan: uncovered.length ? { tasks, uncovered } : { tasks }, problems };
+}
+
+/** `uncovered` is optional: a list of {need, reason}, or of plain strings, which are taken as the need. */
+function parseUncovered(raw: Json | undefined, problems: string[]): UncoveredNeed[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    problems.push('uncovered must be a list of {"need", "reason"}');
+    return [];
+  }
+  return raw.flatMap((item, i): UncoveredNeed[] => {
+    const entry = typeof item === 'string' ? { need: item, reason: '' } : item && typeof item === 'object' && !Array.isArray(item) ? item : {};
+    const need = typeof entry.need === 'string' ? entry.need.trim() : '';
+    if (!need) {
+      problems.push(`uncovered #${i + 1}: need is required`);
+      return [];
+    }
+    return [{ need, reason: typeof entry.reason === 'string' ? entry.reason.trim() : '' }];
+  });
 }
 
 /** Every reason the plan may not run. An empty list means it may. */
@@ -91,6 +118,11 @@ export function validatePlan(plan: Plan, registry: Registry, options: { exclude?
       problems.push(`${where}: ${e.message}`);
     }
   }
+  const uncovered = plan.uncovered ?? [];
+  if (uncovered.length > PLAN_LIMITS.maxUncovered) problems.push(`plan lists ${uncovered.length} uncovered needs; the limit is ${PLAN_LIMITS.maxUncovered}`);
+  uncovered.forEach((u, i) => {
+    if (u.need.length + u.reason.length > PLAN_LIMITS.maxUncoveredChars) problems.push(`uncovered #${i + 1}: need and reason together are longer than ${PLAN_LIMITS.maxUncoveredChars} characters`);
+  });
   const cycle = findCycle(plan);
   if (cycle) problems.push(`dependency cycle: ${cycle.join(' -> ')}`);
   return problems;

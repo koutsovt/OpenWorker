@@ -12,6 +12,7 @@ import { FakeHarness, type FakeStep } from '../../src/harness/fake.ts';
 import type { AgentHarness, Json, ProviderSpec } from '../../src/harness/port.ts';
 import { KnowledgeBase } from '../../src/memory/knowledge.ts';
 import { EvidenceStore, openState, ProjectMemory } from '../../src/memory/state.ts';
+import { CapabilityAssessor } from '../../src/orchestrator/assessment.ts';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.ts';
 import { RunStore } from '../../src/orchestrator/store.ts';
 import { Registry } from '../../src/registry/registry.ts';
@@ -132,11 +133,12 @@ export async function platform(options: PlatformOptions = {}) {
     { workforce, registry, governance, ledger, store, project, evidence, results, providerOf: (alias) => gateway.providerOf(alias) },
     { reportsDir: join(stateDir, 'reports'), ...(options.runBudget ? { runBudget: options.runBudget } : {}) },
   );
+  const assessor = new CapabilityAssessor({ workforce, registry, ledger, evidence, results }, { reportsDir: join(stateDir, 'reports') });
   const find = (type: string) => ledger.records().filter((r) => r.type === type);
   const start = async (extra = '') => {
     const { runId } = await orchestrator.plan({ user: 'local', objective: `${objective}${extra}` });
     orchestrator.approvePlan(runId, 'local', 'approve');
     return runId;
   };
-  return { orchestrator, ledger, store, evidence, registry, find, start, stateDir, inputs, toolResults };
+  return { orchestrator, assessor, project, ledger, store, evidence, registry, find, start, stateDir, inputs, toolResults };
 }

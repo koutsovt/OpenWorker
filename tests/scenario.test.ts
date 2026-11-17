@@ -19,15 +19,15 @@ const statusOf = (summary: { tasks: { id: string; status: string }[] }, id: stri
 describe('registry content', () => {
   const registry = new Registry(resolve('registry'));
 
-  it('has the six approved agents, each matching the lock', () => {
+  it('has the seven approved agents, each matching the lock', () => {
     assert.deepEqual(registry.usableAgents().map((a) => `${a.id}@${a.version}`),
-      ['assurance@2', 'data@1', 'orchestrator@2', 'research@1', 'security@1', 'solution-architecture@1']);
+      ['assurance@2', 'capability-analyst@1', 'data@1', 'orchestrator@2', 'research@1', 'security@1', 'solution-architecture@1']);
     assert.deepEqual(registry.problems(), []);
   });
 
-  it('has the seven skills, each eligible for at least one agent, and resolves dependencies first', () => {
+  it('has the eight skills, each eligible for at least one agent, and resolves dependencies first', () => {
     const eligible = new Set(registry.usableAgents().flatMap((a) => registry.eligibleSkills(a).map((s) => s.id)));
-    assert.deepEqual([...eligible].sort(), ['evidence-verification', 'hosting-architecture-review', 'independent-solution-assurance',
+    assert.deepEqual([...eligible].sort(), ['capability-gap-analysis', 'evidence-verification', 'hosting-architecture-review', 'independent-solution-assurance',
       'integration-architecture', 'requirements-traceability', 'security-threat-modelling', 'solution-architecture-assessment']);
     assert.deepEqual(registry.resolveSkills(registry.agent('assurance'), ['independent-solution-assurance']).map((s) => s.id),
       ['evidence-verification', 'independent-solution-assurance']);

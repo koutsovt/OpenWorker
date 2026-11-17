@@ -15,6 +15,7 @@ import type { Json } from '../harness/port.ts';
 import { KnowledgeBase } from '../memory/knowledge.ts';
 import { EvidenceStore, openState, ProjectMemory } from '../memory/state.ts';
 import { Orchestrator, type RunSummary } from '../orchestrator/orchestrator.ts';
+import { CapabilityAssessor } from '../orchestrator/assessment.ts';
 import { isAssuranceStage } from '../orchestrator/graph.ts';
 import { RunStore } from '../orchestrator/store.ts';
 import { Registry } from '../registry/registry.ts';
@@ -88,7 +89,9 @@ const platform = (knowledgeDir = resolve(process.env.WORKFORCE_KNOWLEDGE_DIR ?? 
     { workforce, registry, governance, ledger, store, project, evidence, results, providerOf: (alias) => gateway.providerOf(alias) },
     { reportsDir: resolve(stateDir, 'reports'), ...(budgets.task ? { budget: budgets.task } : {}), ...(budgets.run ? { runBudget: budgets.run } : {}) },
   );
-  return { harness, workforce, orchestrator, store, project, knowledgeDir, start: () => workforce.start(available(config)) };
+  const assessor = new CapabilityAssessor({ workforce, registry, ledger, evidence, results },
+    { reportsDir: resolve(stateDir, 'reports'), ...(budgets.task ? { budget: budgets.task } : {}) });
+  return { harness, workforce, orchestrator, assessor, store, project, knowledgeDir, start: () => workforce.start(available(config)) };
 };
 
 const report = (summary: RunSummary): void => {
@@ -219,6 +222,12 @@ if (command === 'verify-ledger' || command === 'anchor-ledger') {
         console.error(`  ${t.id}  [${t.agent}${t.skills.length ? `; skills ${t.skills.join(', ')}` : ''}]${t.dependsOn.length ? `  after ${t.dependsOn.join(', ')}` : ''}\n      ${t.objective}`);
       console.error('  Then, run by the platform: independent assurance, one rework round if needed, and the final report.');
     }
+    const gaps = orchestrator.uncovered(runId);
+    if (store.run(runId)?.status === 'planned' && gaps.length) {
+      console.error('\nNOT COVERED: no approved agent or skill fits these parts of the objective, so this plan leaves them undone:');
+      for (const g of gaps) console.error(`  - ${g.need}${g.reason ? `\n      ${g.reason}` : ''}`);
+      console.error('  To cover them, run `npm run assess` on this scenario and have the proposed skills or agents reviewed and approved.');
+    }
     if (store.run(runId)?.status === 'planned')
       orchestrator.approvePlan(runId, approverId, await ask(`\nApprove this plan as ${approverId}, to run as ${user}? [y/N] `) ? 'approve' : 'deny');
     if (store.run(runId)?.status === 'rejected') {
@@ -248,6 +257,32 @@ if (command === 'verify-ledger' || command === 'anchor-ledger') {
   } finally {
     await harness.shutdown();
   }
+} else if (command === 'assess') {
+  // assess [--scenario dir] [description]: which approved agents and skills cover the work, and what is missing.
+  const at = rest.indexOf('--scenario');
+  const scenario = at >= 0 ? rest.splice(at, 2)[1] ?? '' : undefined;
+  const scope = rest.join(' ') || (scenario ? readFileSync(resolve(scenario, 'objective.md'), 'utf8').trim() : '');
+  if (scenario === '' || !scope) {
+    console.error('Usage: npm run assess -- [--scenario dir] [description of the work]');
+    process.exit(2);
+  }
+  const { harness, assessor, start } = platform(scenario ? resolve(scenario, 'knowledge') : undefined);
+  try {
+    await start();
+    console.error('Assessing which approved agents and skills cover this work...');
+    const outcome = await assessor.assess({ user, scope });
+    if (outcome.status === 'completed') {
+      console.log(outcome.reportPath ? `Gap report: ${outcome.reportPath}\n\n${readFileSync(outcome.reportPath, 'utf8')}` : JSON.stringify(outcome.result, null, 2));
+    } else {
+      console.error(`Assessment ${outcome.assessmentId} failed:\n  - ${outcome.problems.join('\n  - ')}`);
+      process.exitCode = 1;
+    }
+  } catch (e) {
+    console.error(`Error: ${(e as Error).message}`);
+    process.exitCode = 1;
+  } finally {
+    await harness.shutdown();
+  }
 } else if (command === 'usage') {
   // usage [run-id]: tokens and cost from the audit ledger, by model and by run, or by task for one run.
   const config = loadConfig(configDir);
@@ -262,6 +297,6 @@ if (command === 'verify-ledger' || command === 'anchor-ledger') {
   const store = new RunStore(openState(resolve(stateDir, 'state.sqlite')));
   for (const run of store.runs()) console.log(`${run.id}  ${run.status.padEnd(9)}  ${run.createdAt}  ${run.user}  ${run.objective.slice(0, 80)}`);
 } else {
-  console.error('Commands: orchestrate [--scenario dir] [--plan file] [objective] | resume <run-id> | runs | usage [run-id] | run <agent-id> [--skills a,b] <task> | ask <model-policy> <question> | registry check|lock | verify-ledger [<seq>:<hash> | anchor-file] | anchor-ledger <anchor-file>');
+  console.error('Commands: orchestrate [--scenario dir] [--plan file] [objective] | resume <run-id> | assess [--scenario dir] [description] | runs | usage [run-id] | run <agent-id> [--skills a,b] <task> | ask <model-policy> <question> | registry check|lock | verify-ledger [<seq>:<hash> | anchor-file] | anchor-ledger <anchor-file>');
   process.exit(2);
 }

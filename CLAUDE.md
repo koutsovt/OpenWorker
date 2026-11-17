@@ -28,7 +28,7 @@ Some tests start the real OpenWorker engine against a local mock HTTP provider (
 In Claude Code's sandbox they are reported as *cancelled* ("Promise resolution is still pending"); run the suite
 outside the sandbox to get a real result. Tests run with `--test-concurrency=1`.
 
-CLI (`src/cli/main.ts`, via npm scripts `orchestrate`, `resume`, `runs`, `usage`, `agent`, `ask`): real model
+CLI (`src/cli/main.ts`, via npm scripts `orchestrate`, `resume`, `assess`, `runs`, `usage`, `agent`, `ask`): real model
 calls need `node --env-file=<private env outside the repo>`. State goes to `.state/` (`WORKFORCE_STATE_DIR`);
 identities are `WORKFORCE_USER` (requester) and `WORKFORCE_APPROVER` (defaults to the requester), checked against
 `config/users.yaml`. The proof-of-concept scenario: `src/cli/main.ts orchestrate --scenario scenarios/research-ethics-eforms`.
@@ -77,6 +77,14 @@ step is derived only from stored results, which is what makes `resume` after a p
 match the agent's output contract (`contracts.ts`, zod) and may cite only evidence ids retrieved in this run; a
 failing result is sent back once. A fail verdict holds the run until an approver overrides with a reason.
 `report.ts` renders the narrative from the report task and generates the traceability section itself.
+The planner may return `uncovered` needs with its plan (work no catalogue agent fits); they are stored as the
+run's `uncovered` decision, shown at approval, added to the report task's objective and listed in the report.
+
+**Capability assessment (`src/orchestrator/assessment.ts`).** `assess` runs `capability-analyst` outside any
+orchestrated run (id `assess-<random>`) against a knowledge folder and the registry catalogue. Its
+`capability-assessment` result passes the zod contract, then `checkAssessment` (registry checks: covering agents
+approved, skills eligible, new ids unused). Agents whose contract is in `PLATFORM_ONLY_CONTRACTS` are excluded
+from planning. The analyst only recommends; it writes nothing (`skills.propose` would need a write role).
 
 **State.** `src/audit/ledger.ts`: append-only, hash-chained SQLite ledger (plus a head row) for every decision;
 `ledger.verify()` checks it. `src/memory/state.ts`: evidence records and project memory, sharing one SQLite file

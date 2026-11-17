@@ -38,7 +38,33 @@ const contracts = {
     recommendations: z.array(text),
     openQuestions: z.array(text).optional(),
   }),
+  /**
+   * Capability assessment: what a body of work needs, set against the approved agents and skills. The registry
+   * checks (real agents, eligible skills, new ids that are actually new) are in `checkAssessment`.
+   */
+  'capability-assessment': z.looseObject({
+    summary: text,
+    needs: z.array(z.looseObject({
+      need: text,
+      evidence: evidenceIds.min(1, 'each need must cite the evidence that shows the work requires it'),
+      coverage: z.enum(['covered', 'partial', 'gap']),
+      coveredBy: z.array(z.looseObject({ agent: text, skills: z.array(text) })).default([]),
+      priority: z.enum(['high', 'medium', 'low']),
+      recommendation: z.looseObject({
+        kind: z.enum(['none', 'new-skill', 'extend-agent', 'new-agent']),
+        /** The skill or agent to create, or the skill to add to an existing agent. */
+        id: text.optional(),
+        /** The agent the skill is for, or the agent to extend. */
+        agent: text.optional(),
+        detail: text,
+      }).optional(),
+    })).min(1).max(40),
+    classification: z.array(text).optional(),
+  }),
 } as const;
+
+/** Contracts whose results are about the platform, not about an objective. Agents producing them are never given planned tasks. */
+export const PLATFORM_ONLY_CONTRACTS: ReadonlySet<string> = new Set(['capability-assessment']);
 
 export type ContractName = keyof typeof contracts;
 export const CONTRACT_NAMES = Object.keys(contracts) as ContractName[];
@@ -48,6 +74,21 @@ export interface AssuranceResult {
   verdict: 'pass' | 'conditional' | 'fail';
   summary: string;
   findings: { task: string; severity: 'critical' | 'major' | 'minor'; issue: string; resolution: string }[];
+}
+
+export interface CapabilityNeed {
+  need: string;
+  evidence: string[];
+  coverage: 'covered' | 'partial' | 'gap';
+  coveredBy: { agent: string; skills: string[] }[];
+  priority: 'high' | 'medium' | 'low';
+  recommendation?: { kind: 'none' | 'new-skill' | 'extend-agent' | 'new-agent'; id?: string; agent?: string; detail: string };
+}
+
+export interface CapabilityAssessment {
+  summary: string;
+  needs: CapabilityNeed[];
+  classification?: string[];
 }
 
 export interface ReportResult {
@@ -64,6 +105,7 @@ export const CONTRACT_SHAPES: Record<ContractName, string> = {
   analysis: '{"summary": string, "claims": [{"statement": string, "evidence": [evidence ids; empty if you have none]}], "assumptions": [string], "openQuestions": [string]} — you may add further fields for your subject, such as options, threats, controls, entities or costs',
   assurance: '{"verdict": "pass" | "conditional" | "fail", "summary": string, "findings": [{"task": id of the task the finding is about, "severity": "critical" | "major" | "minor", "issue": string, "resolution": string}]}',
   report: '{"title": string, "summary": string, "sections": [{"heading": string, "body": string, "evidence": [evidence ids]}], "recommendations": [string], "openQuestions": [string]}',
+  'capability-assessment': '{"summary": string, "needs": [{"need": string, "evidence": [evidence ids, at least one], "coverage": "covered" | "partial" | "gap", "coveredBy": [{"agent": approved agent id, "skills": [ids from that agent\'s eligible skills]}], "priority": "high" | "medium" | "low", "recommendation": {"kind": "none" | "new-skill" | "extend-agent" | "new-agent", "id": new skill or agent id, or the existing skill to add, "agent": agent the skill is for or the agent to extend, "detail": string}}], "classification": [data classification concerns, as strings]}',
 };
 
 /** Every evidence id cited anywhere in a result: any `evidence` list, at any depth. */
