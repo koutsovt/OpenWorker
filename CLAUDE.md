@@ -76,7 +76,8 @@ then `orchestrator.ts` runs ready tasks in parallel. After the planned tasks the
 step is derived only from stored results, which is what makes `resume` after a process kill work. Results must
 match the agent's output contract (`contracts.ts`, zod) and may cite only evidence ids retrieved in this run; a
 failing result is sent back once. A fail verdict holds the run until an approver overrides with a reason.
-`report.ts` renders the narrative from the report task and generates the traceability section itself.
+`report.ts` writes two files: the decision brief (the report task's result, capped by the `report` contract,
+plus condensed traceability) and `<run-id>-appendix.md` (every task's final result, full reviews, evidence register).
 The planner may return `uncovered` needs with its plan (work no catalogue agent fits); they are stored as the
 run's `uncovered` decision, shown at approval, added to the report task's objective and listed in the report.
 

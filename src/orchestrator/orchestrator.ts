@@ -4,7 +4,7 @@
 // model never instantiates anything itself.
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { AuditLedger } from '../audit/ledger.ts';
 import { usageReport } from '../audit/usage.ts';
 import { BudgetTracker, type Budget } from '../governance/budget.ts';
@@ -214,9 +214,14 @@ export class Orchestrator {
     ledger.append('assurance.overridden', `user:${approver}`, { run: runId, reason: reason.trim(), selfApproval: approver === run.user });
   }
 
-  /** Path of the final report for a completed run, when reports are being written. */
+  /** Path of the final report (the decision brief) for a completed run, when reports are being written. */
   reportPath(runId: string): string | undefined {
     return this.options.reportsDir ? join(this.options.reportsDir, `${runId}.md`) : undefined;
+  }
+
+  /** Path of the appendix written beside the brief: every task result, the full review and the evidence register. */
+  appendixPath(runId: string): string | undefined {
+    return this.options.reportsDir ? join(this.options.reportsDir, `${runId}-appendix.md`) : undefined;
   }
 
   /** Runs every task that is ready until nothing more can start. */
@@ -364,14 +369,17 @@ export class Orchestrator {
   private writeReport(run: RunRecord): void {
     const { store, evidence, project, ledger, providerOf } = this.deps;
     const path = this.reportPath(run.id);
-    if (!path) return;
-    const text = renderReport({
+    const appendixPath = this.appendixPath(run.id);
+    if (!path || !appendixPath) return;
+    const { brief, appendix } = renderReport({
       run, tasks: store.tasks(run.id), evidence: evidence.list(run.id), decisions: project.entries(run.id, 'decision'),
-      ledger: ledger.records(), providerOf: providerOf ?? (() => undefined),
+      ledger: ledger.records(), providerOf: providerOf ?? (() => undefined), appendixName: basename(appendixPath),
     });
     mkdirSync(this.options.reportsDir!, { recursive: true });
-    writeFileSync(path, text);
-    ledger.append('report.written', 'system', { run: run.id, digest: createHash('sha256').update(text).digest('hex') });
+    writeFileSync(appendixPath, appendix);
+    writeFileSync(path, brief);
+    const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+    ledger.append('report.written', 'system', { run: run.id, digest: sha(brief), appendixDigest: sha(appendix) });
   }
 
   /**
@@ -531,14 +539,14 @@ const REASSURANCE_OBJECTIVE = [
   'Report only the findings that remain, each with the id of the task it is about, and give a final verdict: pass, conditional or fail.',
 ].join('\n');
 const REPORT_OBJECTIVE = [
-  'Write the final report for the overall objective from the task results and the assurance findings below. Add no new analysis and no claim that is not in a task result.',
-  'Organise it into sections that answer the objective. For each section, list the evidence ids that the underlying task results cite for it.',
-  'State plainly any assurance finding that remains open, and carry unresolved questions into openQuestions.',
+  'Write a short decision brief on the overall objective for a senior reader who will not read the task results. The platform attaches the full task results, the review and the evidence register as an appendix, so do not restate them: select what matters for the decision.',
+  'answer: the bottom line in a few plain sentences. findings: the 3 to 6 points that matter most for the decision, each a short heading and two or three sentences, with the evidence ids the task results cite for it. recommendations: what to do, one sentence each. decisionsNeeded: decisions or confirmations that people outside the work must give, one sentence each.',
+  'Add no new analysis and no claim that is not in a task result. Where results disagree, say so. Name any critical or major assurance finding that is still open. The platform rejects a brief over the stated lengths.',
 ].join('\n');
 /** The report must not read as complete when the approved plan left parts of the objective to no one. */
 const reportObjective = (uncovered: UncoveredNeed[]): string => uncovered.length ? [
   REPORT_OBJECTIVE,
-  'The approved plan left these parts of the objective uncovered, because no approved agent or skill fits them. Say in the report that they were not assessed, and carry each into openQuestions:',
+  'The approved plan left these parts of the objective uncovered, because no approved agent or skill fits them. Say in the answer that they were not assessed, and carry each into decisionsNeeded:',
   ...uncovered.map((u) => `- ${u.need}${u.reason ? ` (${u.reason})` : ''}`),
 ].join('\n') : REPORT_OBJECTIVE;
 const reworkObjective = (task: TaskRecord): string => [

@@ -13,6 +13,7 @@ import { EvidenceStore, openState, ProjectMemory } from '../src/memory/state.ts'
 import { Registry } from '../src/registry/registry.ts';
 import type { AgentInstance } from '../src/runtime/workforce.ts';
 import { knowledgeTools } from '../src/tools/knowledge.ts';
+import { checkResult } from '../src/orchestrator/contracts.ts';
 
 describe('Claude Code adapter: error results', () => {
   // What Claude Code sends when it is not signed in: a `success` result flagged is_error, with the error as text.
@@ -88,5 +89,25 @@ describe('knowledge.read limit', () => {
     for (const document of kb.documents) for (let i = 1; kb.read(document, `p${i}`); i++) passages++;
     const limit = new Registry(resolve('registry')).tools.get('knowledge.read')!.limits.maxCallsPerSession;
     assert.ok(limit >= passages * 2, `limit ${limit} for ${passages} passages`);
+  });
+});
+
+describe('report contract: a decision brief', () => {
+  const brief = {
+    title: 'Assessment', answer: 'Viable, with hosting unresolved.',
+    findings: [{ heading: 'Hosting', point: 'Railway has no Australian region.', evidence: [] }],
+    recommendations: ['Decide the production host.'], decisionsNeeded: ['Who approves REQ-09?'],
+  };
+  const context = { evidenceIds: new Set<string>(), taskIds: new Set<string>() };
+
+  it('accepts a short brief', () => {
+    assert.deepEqual(checkResult('report', brief, context), []);
+  });
+
+  it('sends back a brief that is too long, saying which part', () => {
+    const long = { ...brief, answer: 'word '.repeat(400), findings: Array.from({ length: 9 }, () => brief.findings[0]!) };
+    const problems = checkResult('report', long, context).join('; ');
+    assert.match(problems, /answer: at most 1,200 characters/);
+    assert.match(problems, /findings: at most 6/);
   });
 });
