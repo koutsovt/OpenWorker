@@ -11,7 +11,8 @@ const PATTERNS: [name: string, pattern: RegExp][] = [
   ['override', /\b(ignore|disregard|forget|override)\b[^.\n]{0,40}\b(instructions?|directions?|guidance|rules|prompts?)\b/i],
   ['role-change', /\byou are now\b|\bnew instructions?\b|\bact as (an?|the)\b[^.\n]{0,30}\b(admin|administrator|system|developer)\b/i],
   ['role-tag', /<\/?\s*(system|assistant|instructions?|admin)\b[^>]*>|(^|<!--)\s*(system|assistant|developer)\s*:/i],
-  ['tool-directive', /\b(result\.submit|skills\.(load|propose)|knowledge\.(search|read)|evidence\.get|project\.read)\b|\b(call|invoke)\s+(the\s+)?[\w.]+\s+(tool|function)\b/i],
+  // A directive to use a platform tool. Naming a tool is not one: reviewers legitimately write "checked with evidence.get".
+  ['tool-directive', /\b(call|invoke|use|run|execute|trigger)\s+(the\s+)?(tool\s+)?(result\.submit|skills\.(load|propose)|knowledge\.(search|read)|evidence\.get|project\.read)\b|\b(call|invoke)\s+(the\s+)?[\w.]+\s+(tool|function)\b/i],
   ['disclosure', /\b(reveal|print|repeat|show|output|send)\b[^.\n]{0,40}\b(system prompt|your (instructions|prompt|rules)|api keys?|credentials)\b/i],
   ['verdict-steering', /\b(reviewers?|assurance|auditors?|you)\b[^.\n]{0,40}\b(must|should|shall|will)\b[^.\n]{0,40}\b(pass|approved?|verdict)\b/i],
   ['concealment', /\bdo not (tell|mention|report|flag|reveal|disclose)\b/i],

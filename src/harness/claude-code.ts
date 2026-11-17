@@ -25,6 +25,8 @@ export interface EngineMessage {
   /** On assistant messages: `rate_limit`, `overloaded`, `server_error`, ... */
   error?: string;
   result?: string;
+  /** On result messages: true when the turn ended on an error, even with subtype `success` (for example "Not logged in"). */
+  is_error?: boolean;
   num_turns?: number;
   api_error_status?: number | null;
   usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
@@ -297,7 +299,10 @@ class ClaudeCodeSession implements AgentSession {
         usage.inputTokens = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
         usage.outputTokens = u.output_tokens ?? 0;
         usage.complete = message.usage !== undefined;
-        if (message.subtype === 'success') finish({ status: 'completed', output: message.result ?? '', approvals: [], usage });
+        // A `success` result with is_error carries the error text instead of an answer: it is a failure, not empty output.
+        if (message.subtype === 'success' && message.is_error)
+          finish({ status: 'failed', output: null, approvals: [], usage, failure: failureOf(lastError, message.api_error_status, message.result) });
+        else if (message.subtype === 'success') finish({ status: 'completed', output: message.result ?? '', approvals: [], usage });
         else if (message.subtype === 'error_max_turns')
           finish({ status: 'failed', output: null, approvals: [], failure: { category: 'limit', retryable: false }, usage });
         else finish({ status: 'failed', output: null, approvals: [], usage, failure: failureOf(lastError, message.api_error_status) });
@@ -312,7 +317,9 @@ class ClaudeCodeSession implements AgentSession {
   }
 }
 
-function failureOf(error: string | undefined, status: number | null | undefined): { category: string; retryable: boolean } {
+function failureOf(error: string | undefined, status: number | null | undefined, text?: string): { category: string; retryable: boolean } {
+  // Claude Code is not signed in: a person has to run `claude auth login`; no retry or fallback can fix it.
+  if (/not logged in|please run \/login/i.test(text ?? '')) return { category: 'not_logged_in', retryable: false };
   const retryable = ['rate_limit', 'overloaded', 'server_error'].includes(error ?? '') || status === 429 || (status ?? 0) >= 500;
   return { category: error ?? (status ? `http_${status}` : 'unknown'), retryable };
 }

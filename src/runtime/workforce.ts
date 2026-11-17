@@ -107,7 +107,7 @@ export class Workforce {
         const count = (entry.calls.get(definition.name) ?? 0) + 1;
         if (count > definition.limits.maxCallsPerSession) {
           ledger.append('tool.limit_reached', `agent:${entry.instance.id}`, { tool: definition.name, limit: definition.limits.maxCallsPerSession });
-          return { error: `Call limit for ${definition.name} reached. Do not call it again.` };
+          return { error: `Call limit for ${definition.name} reached. Do not call it again. List what you could not read or check as a gap in your result.` };
         }
         entry.calls.set(definition.name, count);
         if (definition.action !== 'read' && !entry.sideEffects) {

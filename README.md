@@ -9,14 +9,16 @@ SDK validation results: [spikes/m0/RESULTS.md](spikes/m0/RESULTS.md).
 ## Status
 
 All five planned milestones are in place: skeleton, registries and governance, orchestration, the proof-of-concept scenario, and hardening.
-**The scenario runs end to end on every engine, including the real OpenWorker runtime, but only with a scripted model behind it. It has not yet run against real models.**
+**The scenario runs end to end on every engine with a scripted model behind it. On 17 Nov 2026 it also completed once
+against real models: every agent on Claude through Claude Code, including the reviewer, so assurance independence was
+reduced (no OpenAI or DeepSeek key was available). It has not yet run as designed, with OpenAI as the reviewer.**
 
 | Part | Where | State |
 |---|---|---|
 | Harness interface | `src/harness/port.ts` | Done |
 | Fake adapter (scripted, no model calls) | `src/harness/fake.ts` | Done |
 | OpenWorker adapter | `src/harness/openworker.ts` | Done; verified against DeepSeek with real calls; OpenAI not yet run |
-| Claude Code adapter (subscription, local only) | `src/harness/claude-code.ts` | Written; logic tested with a scripted engine. **Not yet run against real Claude Code** — see below |
+| Claude Code adapter (subscription, local only) | `src/harness/claude-code.ts` | Done; `scripts/claude-code-check.ts` passed 11/11 against real Claude Code on 17 Nov 2026 |
 | Engine router | `src/harness/routing.ts` | Done |
 | Audit ledger (hash-chained) | `src/audit/ledger.ts` | Done |
 | Config loading | `src/config/load.ts`, `config/` | Done |
@@ -25,7 +27,7 @@ All five planned milestones are in place: skeleton, registries and governance, o
 | Policy decisions, approvals, budgets | `src/governance/` | Done; self-approval is a policy setting, and budgets apply per run |
 | Agent runtime (instantiation under governance) | `src/runtime/workforce.ts` | Done; one real end-to-end run on DeepSeek |
 | Command line | `src/cli/main.ts` | Done |
-| Orchestrator: planner, plan gate, task graph, parallel execution, retry, restart recovery | `src/orchestrator/` | Done on the fake engine, including a real process kill. **Not yet run against a real model** |
+| Orchestrator: planner, plan gate, task graph, parallel execution, retry, restart recovery | `src/orchestrator/` | Done on the fake engine, including a real process kill; one real run on Claude (12 tasks, one rework round with cascade) |
 | Knowledge search, evidence records, project memory | `src/memory/`, `src/tools/knowledge.ts` | Done |
 | Structured results and output contracts | `src/tools/result.ts`, `src/orchestrator/contracts.ts` | Done; a result must match its contract and cite only evidence that exists in the run |
 | Six agents, seven skills | `registry/` | Written and locked. **Review them: the lock is your approval** |
@@ -57,8 +59,9 @@ OpenWorker engine talking to a local mock provider.
 
 ## Check the Claude Code adapter (your machine, your subscription)
 
-Claude runs through Claude Code on a personal subscription, for local individual use only. Sign in to
-Claude Code first, make sure `ANTHROPIC_API_KEY` is not set in your shell, then run:
+Claude runs through Claude Code on a personal subscription, for local individual use only. Signing in to the Claude
+desktop app does not sign in the `claude` command, which is what the adapter uses: run `claude auth login` and check
+`claude auth status` shows `"loggedIn": true`. Make sure `ANTHROPIC_API_KEY` is not set in your shell, then run:
 
 ```bash
 node --disable-warning=ExperimentalWarning scripts/claude-code-check.ts
@@ -180,7 +183,7 @@ at start with SQLite full-text search and never written to. Agents whose definit
 | `knowledge.search` | Keyword search; returns document, passage anchor and a snippet |
 | `knowledge.read` | Reads one passage and records it as evidence; returns the evidence id to cite |
 | `evidence.get` | Looks up an evidence record; says so if the source has changed since it was read |
-| `project.read` | The run's objective, completed task results and evidence so far |
+| `project.read` | The run's objective, decisions, evidence so far and an index of completed task results; pass `artefact` to read one result in full |
 | `result.submit` | Hands the task's structured result back to the platform |
 
 An evidence record holds the document, passage, a hash of the passage text, the agent instance that read it

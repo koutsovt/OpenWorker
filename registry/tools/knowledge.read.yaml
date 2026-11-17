@@ -5,7 +5,8 @@ action: read
 risk: low
 dataClassification: internal
 limits:
-  maxCallsPerSession: 60
+  # About twice the scenario's knowledge pack (59 passages), so reading every passage and re-reading some still fits.
+  maxCallsPerSession: 120
 inputSchema:
   type: object
   properties:
