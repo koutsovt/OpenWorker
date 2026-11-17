@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AuditLedger } from '../audit/ledger.ts';
+import { usageReport } from '../audit/usage.ts';
 import { BudgetTracker, type Budget } from '../governance/budget.ts';
 import { screenJson } from '../governance/injection.ts';
 import type { Governance } from '../governance/policy.ts';
@@ -36,11 +37,7 @@ export interface OrchestratorOptions {
   maxAttempts?: number;
   /** Planner attempts; after a rejected plan the planner is told why and asked once more. */
   maxPlanAttempts?: number;
-  /**
-   * Applied to planning, and to each execution of a run as a whole: every task of the run is
-   * charged to one budget, and no task starts once it is used up. A call may give its own.
-   * A resumed run starts a fresh budget.
-   */
+  /** Applied to each task attempt and to planning, unless the call gives its own. */
   budget?: Budget;
   /**
    * Agent definition that reviews the planned work. With it set, every run ends with assurance,
@@ -49,6 +46,12 @@ export interface OrchestratorOptions {
   assuranceAgent?: string | null;
   /** Where final reports are written, as `<run id>.md`. */
   reportsDir?: string;
+  /**
+   * Limits across all tasks of one run. Usage already in the audit ledger counts, so they hold across a
+   * restart. Once one is reached no further task starts; tasks already running finish and keep their
+   * results. Wall-clock time is a per-task limit only.
+   */
+  runBudget?: Pick<Budget, 'maxModelCalls' | 'maxTokens' | 'maxCostUsd'>;
 }
 
 interface Deps {
@@ -71,15 +74,17 @@ export interface RunSummary {
 }
 
 const RESULT_TOOL = 'result.submit';
-/** What the stages of one execution share: the approver and the run's budget. */
-interface RunOptions { approver?: Approver; tracker: BudgetTracker }
+/** What the stages of one execution share: the approver, the per-task budget and the run's budget. */
+interface RunOptions { approver?: Approver; budget: Budget; tracker: BudgetTracker }
 const digest = (value: Json) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
 const unfinished: TaskStatus[] = ['failed', 'blocked', 'needs_attention'];
 
 export class Orchestrator {
   private readonly deps: Deps;
   private readonly flagged = new Set<string>();
-  private readonly options: Required<Omit<OrchestratorOptions, 'budget' | 'reportsDir'>> & { budget: Budget; reportsDir: string | undefined };
+  private readonly options: Required<Omit<OrchestratorOptions, 'budget' | 'reportsDir' | 'runBudget'>> & {
+    budget: Budget; reportsDir: string | undefined; runBudget: NonNullable<OrchestratorOptions['runBudget']>;
+  };
 
   constructor(deps: Deps, options: OrchestratorOptions = {}) {
     this.deps = deps;
@@ -87,7 +92,7 @@ export class Orchestrator {
       plannerAgent: options.plannerAgent ?? 'orchestrator', concurrency: Math.max(1, options.concurrency ?? 3),
       maxAttempts: Math.max(1, options.maxAttempts ?? 2), maxPlanAttempts: Math.max(1, options.maxPlanAttempts ?? 2),
       budget: options.budget ?? {}, assuranceAgent: options.assuranceAgent === undefined ? 'assurance' : options.assuranceAgent,
-      reportsDir: options.reportsDir,
+      reportsDir: options.reportsDir, runBudget: options.runBudget ?? {},
     };
   }
 
@@ -179,7 +184,7 @@ export class Orchestrator {
     ledger.append(run.status === 'approved' ? 'run.started' : 'run.resumed', actor, { run: runId, interrupted: interrupted.map((t) => t.id) });
     store.setRunStatus(runId, 'running');
 
-    const running: RunOptions = { ...options, tracker: new BudgetTracker(options.budget ?? this.options.budget) };
+    const running: RunOptions = { ...options, budget: options.budget ?? this.options.budget, tracker: this.runTracker(runId) };
     await this.drain(run, running);
     const status: RunStatus = this.options.assuranceAgent
       ? await this.stages(run, this.options.assuranceAgent, running)
@@ -220,6 +225,7 @@ export class Orchestrator {
     const runId = run.id;
     const active = new Map<string, Promise<void>>();
     while (true) {
+      this.stopAtRunBudget(runId, active, options.tracker);
       this.blockDependants(runId);
       const tasks = store.tasks(runId);
       const completed = new Set(tasks.filter((t) => t.status === 'completed').map((t) => t.id));
@@ -232,6 +238,31 @@ export class Orchestrator {
       if (!active.size) break;
       await Promise.race(active.values());
     }
+  }
+
+  /** The run's budget, already charged with what the ledger shows this run has used, so a restart does not reset it. */
+  private runTracker(runId: string): BudgetTracker {
+    const tracker = new BudgetTracker(this.options.runBudget);
+    const used = usageReport(this.deps.ledger.records(), { runId }).total;
+    if (used.sessions) {
+      tracker.charge({ modelCalls: used.modelCalls, inputTokens: used.inputTokens, outputTokens: used.outputTokens, complete: true },
+        used.unpriced ? null : used.costUsd);
+    }
+    return tracker;
+  }
+
+  /** Once the run's budget is spent, nothing further starts. Tasks already running are left to finish. */
+  private stopAtRunBudget(runId: string, active: Map<string, unknown>, tracker: BudgetTracker): void {
+    const { store, ledger } = this.deps;
+    const breach = tracker.exceeded();
+    if (!breach) return;
+    const waiting = store.tasks(runId).filter((t) => t.status === 'pending' && !active.has(t.id));
+    if (!waiting.length) return;
+    for (const task of waiting) store.setTaskStatus(runId, task.id, 'blocked', `run_budget_exceeded: ${breach}`);
+    ledger.append('budget.run_exceeded', 'system', {
+      run: runId, limit: breach, modelCalls: tracker.modelCalls, tokens: tracker.tokens, costUsd: tracker.costUnknown ? null : tracker.costUsd,
+      notStarted: waiting.map((t) => t.id),
+    });
   }
 
   /**
@@ -262,13 +293,25 @@ export class Orchestrator {
         firstVerdict.findings.some((f) => f.severity !== 'minor' && f.task.replace(/-rework$/, '') === t.id));
       const second = by.get(STAGE.reassurance);
       if (targets.length && !second) {
-        for (const t of targets)
-          store.addTask(run.id, { id: STAGE.rework(t.id), agent: t.agent, objective: reworkObjective(t), skills: t.skills, dependsOn: [...t.dependsOn, t.id, STAGE.assurance] });
+        // A task built on a result that is being revised is stale, so it is redone too, after the revision it depends on.
+        const redo = new Set(targets.map((t) => t.id));
+        for (let grew = true; grew;) {
+          grew = false;
+          for (const t of planned) if (!redo.has(t.id) && t.dependsOn.some((d) => redo.has(d))) grew = Boolean(redo.add(t.id));
+        }
+        const latest = (id: string) => (redo.has(id) ? STAGE.rework(id) : id);
+        for (const t of planned.filter((x) => redo.has(x.id))) {
+          store.addTask(run.id, {
+            id: STAGE.rework(t.id), agent: t.agent, objective: targets.includes(t) ? reworkObjective(t) : cascadeObjective(t), skills: t.skills,
+            dependsOn: [...t.dependsOn.map(latest), t.id, STAGE.assurance],
+          });
+        }
         store.addTask(run.id, {
-          id: STAGE.reassurance, agent: assuranceAgent, objective: REASSURANCE_OBJECTIVE, skills,
-          dependsOn: [...planned.map((t) => (targets.includes(t) ? STAGE.rework(t.id) : t.id)), STAGE.assurance],
+          id: STAGE.reassurance, agent: assuranceAgent, objective: REASSURANCE_OBJECTIVE, skills, dependsOn: [...planned.map((t) => latest(t.id)), STAGE.assurance],
         });
-        ledger.append('assurance.rework_requested', 'system', { run: run.id, tasks: targets.map((t) => t.id) });
+        ledger.append('assurance.rework_requested', 'system', {
+          run: run.id, tasks: targets.map((t) => t.id), cascaded: planned.filter((t) => redo.has(t.id) && !targets.includes(t)).map((t) => t.id),
+        });
         await this.drain(run, options);
         continue;
       }
@@ -397,7 +440,7 @@ export class Orchestrator {
         store.startAttempt(run.id, task.id);
         ledger.append('run.task_started', actor, { ...base, attempt });
         const outcome: AgentRunOutcome = await workforce.runAgent({
-          agentId: task.agent, user: run.user, skills: task.skills, tracker: options.tracker,
+          agentId: task.agent, user: run.user, skills: task.skills, budget: options.budget, tracker: options.tracker,
           input: taskBrief(run.objective, task, upstream, wantsResult, contract, previous),
           run: { runId: run.id, taskId: task.id },
           onSideEffect: () => store.markSideEffects(run.id, task.id),
@@ -482,6 +525,12 @@ const REPORT_OBJECTIVE = [
 const reworkObjective = (task: TaskRecord): string => [
   `Revise your earlier result for task "${task.id}" to resolve the assurance findings about it. Your earlier result and the findings are below.`,
   'Keep what was sound, change what the findings require, and submit the complete revised result, not a list of changes.',
+  `The original task was:\n${task.objective}`,
+].join('\n');
+
+const cascadeObjective = (task: TaskRecord): string => [
+  `A result that your task "${task.id}" was built on has been revised after independent review. The revised result, your earlier result and the review findings are below.`,
+  'Bring your result into line with the revised input. Change only what the revision affects, and submit the complete result, not a list of changes.',
   `The original task was:\n${task.objective}`,
 ].join('\n');
 

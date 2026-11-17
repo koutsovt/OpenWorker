@@ -93,6 +93,21 @@ export class AuditLedger {
   }
 
   /**
+   * Checks heads recorded earlier, outside this file (anchors). `verify()` alone cannot catch someone
+   * who rewrites the whole file and rebuilds the chain; an anchor can, because the rebuilt record at
+   * that position has a different hash. Returns one problem per anchor that does not match.
+   */
+  checkAnchors(anchors: LedgerHead[]): string[] {
+    const find = this.db.prepare('SELECT hash FROM audit WHERE seq = ?');
+    return anchors.flatMap((anchor) => {
+      if (anchor.seq === 0) return anchor.hash === GENESIS ? [] : ['anchor at record 0: not the genesis hash'];
+      const row = find.get(anchor.seq) as { hash: string } | undefined;
+      if (!row) return [`anchor at record ${anchor.seq}: the ledger no longer has that record`];
+      return row.hash === anchor.hash ? [] : [`anchor at record ${anchor.seq}: the ledger holds a different record than was anchored`];
+    });
+  }
+
+  /**
    * Returns the first broken sequence number, or `ok` with the head. `expect` is a head recorded
    * earlier, outside this file: the chain must still contain that exact record.
    */
@@ -111,10 +126,8 @@ export class AuditLedger {
     const last = all.at(-1);
     if ((last?.seq ?? 0) !== head.seq || (last?.hash ?? GENESIS) !== head.hash)
       return { ok: false, brokenAt: Math.min(expected, head.seq), reason: 'records missing from the end (head mismatch)' };
-    if (expect) {
-      const anchored = expect.seq === 0 ? expect.hash === GENESIS : all[expect.seq - 1]?.hash === expect.hash;
-      if (!anchored) return { ok: false, brokenAt: expect.seq, reason: 'does not contain the expected head' };
-    }
+    const [problem] = expect ? this.checkAnchors([expect]) : [];
+    if (problem) return { ok: false, brokenAt: expect!.seq, reason: problem };
     return { ok: true, count: all.length, head };
   }
 

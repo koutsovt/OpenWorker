@@ -1,6 +1,6 @@
 // Command line: orchestrate an objective, run a registered agent, ask one question
 // under a model policy, check or lock the registry, or verify the audit ledger.
-import { mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AuditLedger } from '../audit/ledger.ts';
 import { formatUsage, usageReport } from '../audit/usage.ts';
@@ -24,7 +24,8 @@ import { ResultInbox } from '../tools/result.ts';
 import { skillTools } from '../tools/skills.ts';
 import { writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
+import type { Budget } from '../governance/budget.ts';
 
 const [command, ...rest] = process.argv.slice(2);
 const stateDir = resolve(process.env.WORKFORCE_STATE_DIR ?? '.state');
@@ -66,6 +67,9 @@ const platform = (knowledgeDir = resolve(process.env.WORKFORCE_KNOWLEDGE_DIR ?? 
   const registry = new Registry(resolve('registry'));
   const governance = Governance.load(resolve(configDir, 'users.yaml'), resolve(configDir, 'policies.yaml'));
   const state = openState(resolve(stateDir, 'state.sqlite'));
+  // task: limits per task attempt; run: limits across every task of one run (see config/budgets.yaml).
+  const budgetsPath = resolve(configDir, 'budgets.yaml');
+  const budgets = (existsSync(budgetsPath) ? parse(readFileSync(budgetsPath, 'utf8')) ?? {} : {}) as { task?: Budget; run?: Budget };
   const project = new ProjectMemory(state);
   const evidence = new EvidenceStore(state);
   const results = new ResultInbox();
@@ -82,7 +86,7 @@ const platform = (knowledgeDir = resolve(process.env.WORKFORCE_KNOWLEDGE_DIR ?? 
   const store = new RunStore(state);
   const orchestrator = new Orchestrator(
     { workforce, registry, governance, ledger, store, project, evidence, results, providerOf: (alias) => gateway.providerOf(alias) },
-    { reportsDir: resolve(stateDir, 'reports') },
+    { reportsDir: resolve(stateDir, 'reports'), ...(budgets.task ? { budget: budgets.task } : {}), ...(budgets.run ? { runBudget: budgets.run } : {}) },
   );
   return { harness, workforce, orchestrator, store, project, knowledgeDir, start: () => workforce.start(available(config)) };
 };
@@ -94,14 +98,36 @@ const report = (summary: RunSummary): void => {
   if (summary.status !== 'completed') for (const t of summary.tasks.filter((x) => x.result !== null)) console.log(`\n## ${t.id}\n${JSON.stringify(t.result, null, 2)}`);
 };
 
-if (command === 'verify-ledger') {
-  // verify-ledger [<seq>:<hash>]: the optional head is one recorded earlier, for example in a final report.
-  const [seq, hash] = (rest[0] ?? '').split(':');
-  const verdict = ledger.verify(rest[0] ? { seq: Number(seq), hash: hash ?? '' } : undefined);
+if (command === 'verify-ledger' || command === 'anchor-ledger') {
+  // verify-ledger [<seq>:<hash> | anchor-file]: check the chain, and a head recorded earlier (for example in a
+  // final report) or every anchor in a file; WORKFORCE_ANCHOR_FILE names a default file.
+  // anchor-ledger <anchor-file>: append the current head to that file. Keep it where this machine's users cannot rewrite it.
+  const target = rest[0] ?? process.env.WORKFORCE_ANCHOR_FILE;
+  const single = target && /^\d+:[0-9a-f]{64}$/.test(target) ? { seq: Number(target.split(':')[0]), hash: target.split(':')[1]! } : undefined;
+  const verdict = ledger.verify(single);
   console.log(verdict.ok
     ? `Ledger intact: ${verdict.count} records. Head ${verdict.head.seq}:${verdict.head.hash}`
     : `Ledger BROKEN at record ${verdict.brokenAt}: ${verdict.reason}.`);
-  process.exit(verdict.ok ? 0 : 1);
+  let ok = verdict.ok;
+  if (command === 'anchor-ledger') {
+    const head = ledger.head();
+    if (!target || single || !verdict.ok || head.seq === 0) {
+      console.error(!target || single ? 'Usage: npm run anchor-ledger -- <anchor-file>' : 'Nothing anchored: the ledger is empty or broken.');
+      process.exit(2);
+    }
+    appendFileSync(resolve(target), `${JSON.stringify({ at: new Date().toISOString(), ...head })}\n`);
+    console.log(`Anchored record ${head.seq} (${head.hash.slice(0, 12)}…) in ${target}.`);
+  } else if (target && !single) {
+    if (!existsSync(resolve(target))) {
+      console.error(`No anchor file at ${target}.`);
+      process.exit(2);
+    }
+    const anchors = readFileSync(resolve(target), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { seq: number; hash: string });
+    const problems = ledger.checkAnchors(anchors);
+    console.log(problems.length ? problems.map((p) => `ANCHOR MISMATCH  ${p}`).join('\n') : `All ${anchors.length} anchors match.`);
+    ok = ok && !problems.length;
+  }
+  process.exit(ok ? 0 : 1);
 } else if (command === 'ask') {
   const [policy, ...words] = rest;
   if (!policy || !words.length) {
@@ -236,6 +262,6 @@ if (command === 'verify-ledger') {
   const store = new RunStore(openState(resolve(stateDir, 'state.sqlite')));
   for (const run of store.runs()) console.log(`${run.id}  ${run.status.padEnd(9)}  ${run.createdAt}  ${run.user}  ${run.objective.slice(0, 80)}`);
 } else {
-  console.error('Commands: orchestrate [--scenario dir] [--plan file] [objective] | resume <run-id> | runs | usage [run-id] | run <agent-id> [--skills a,b] <task> | ask <model-policy> <question> | registry check|lock | verify-ledger');
+  console.error('Commands: orchestrate [--scenario dir] [--plan file] [objective] | resume <run-id> | runs | usage [run-id] | run <agent-id> [--skills a,b] <task> | ask <model-policy> <question> | registry check|lock | verify-ledger [<seq>:<hash> | anchor-file] | anchor-ledger <anchor-file>');
   process.exit(2);
 }

@@ -16,6 +16,7 @@
     "agent": "node --disable-warning=ExperimentalWarning src/cli/main.ts run",
     "registry": "node --disable-warning=ExperimentalWarning src/cli/main.ts registry",
     "ask": "node --disable-warning=ExperimentalWarning src/cli/main.ts ask",
+    "anchor-ledger": "node --disable-warning=ExperimentalWarning src/cli/main.ts anchor-ledger",
     "verify-ledger": "node --disable-warning=ExperimentalWarning src/cli/main.ts verify-ledger"
   },
   "dependencies": {

@@ -13,5 +13,6 @@ Runs, tasks, evidence and project memory are in one SQLite file. Every decision 
 ## Consequences
 
 - An edit, deletion or reordering in the ledger is detected by `npm run verify-ledger`.
-- The chain is not anchored outside the machine: someone who can rewrite the whole file can rebuild the chain. Anchoring the head hash to write-once storage is deferred.
+- The head (latest seq and hash) is kept in its own table, written with each record, so records deleted from the end are detected.
+- Someone who can rewrite the whole file can rebuild the chain. `anchor-ledger` writes the head to a file of your choosing and `verify-ledger` checks against it (or against one `<seq>:<hash>`, which the final report prints); the protection is only as good as where that is kept, which is an operating decision, not code.
 - Single-writer by design. Moving to PostgreSQL is needed before more than one process writes.

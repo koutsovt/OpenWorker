@@ -65,6 +65,7 @@ export function script(model: string, n: number, input: string): FakeStep {
       case 'data': return [analysis('Data model and migration.', ['PRIME project id is the matching key.', ['ev-3']])];
       case 'data-rework': return [analysis('Data model and migration, revised.', ['PRIME project id is the matching key.', ['ev-3']])];
       case 'costs': return [analysis('Indicative costs.', ['Costs assume the Railway sizing.', []])];
+      case 'costs-rework': return [analysis('Indicative costs, with the hosting question open.', ['Costs assume the Railway sizing, which residency may rule out.', ['ev-2']])];
       case 'assurance': return [
         call('evidence.get', { id: 'ev-2' }),
         has('FAIL-VERDICT')
@@ -99,6 +100,7 @@ export interface PlatformOptions {
   script?: Script;
   /** Rewrites the configured providers, for engines that reach them differently. Names must stay the same. */
   provider?: (p: ProviderSpec) => ProviderSpec;
+  runBudget?: { maxModelCalls?: number; maxTokens?: number; maxCostUsd?: number };
 }
 
 export async function platform(options: PlatformOptions = {}) {
@@ -128,7 +130,7 @@ export async function platform(options: PlatformOptions = {}) {
   await workforce.start(config.providers.map(options.provider ?? ((p) => p)));
   const orchestrator = new Orchestrator(
     { workforce, registry, governance, ledger, store, project, evidence, results, providerOf: (alias) => gateway.providerOf(alias) },
-    { reportsDir: join(stateDir, 'reports') },
+    { reportsDir: join(stateDir, 'reports'), ...(options.runBudget ? { runBudget: options.runBudget } : {}) },
   );
   const find = (type: string) => ledger.records().filter((r) => r.type === type);
   const start = async (extra = '') => {

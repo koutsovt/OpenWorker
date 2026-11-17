@@ -333,10 +333,11 @@ describe('budgets and fallback', () => {
     assert.equal(outcome.failure, 'model_calls');
   });
 
-  it('starts nothing once a shared budget is used up', async () => {
+  it('starts nothing once a shared budget is used up, but keeps the output of the run that used it up', async () => {
     const t = setup();
     const tracker = new BudgetTracker({ maxModelCalls: 2 });
-    assert.equal((await t.run({ input: 'read', tracker })).status, 'budget_exceeded');
+    assert.equal((await t.run({ input: 'read', tracker })).status, 'completed');
+    assert.equal(tracker.modelCalls, 2);
     const ranBefore = t.ran['kb.read'];
     const second = await t.run({ input: 'read', tracker });
     assert.equal(second.status, 'budget_exceeded');

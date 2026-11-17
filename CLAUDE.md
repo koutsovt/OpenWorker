@@ -20,7 +20,8 @@ node --disable-warning=ExperimentalWarning --test tests/registry.test.ts        
 node --disable-warning=ExperimentalWarning --test --test-name-pattern="lock" tests/registry.test.ts   # one test
 npm run registry -- check    # do approved agents, skills and tools match registry/approved.lock.yaml?
 npm run registry -- lock     # regenerate the lock (this IS the approval step; see below)
-npm run verify-ledger        # check the audit hash chain; optionally `-- <seq>:<hash>` of a head recorded earlier
+npm run verify-ledger        # check the audit hash chain; optionally `-- <seq>:<hash>` or `-- <anchor-file>`
+npm run anchor-ledger -- <anchor-file>   # append the ledger head to a file kept off this machine
 ```
 
 Some tests start the real OpenWorker engine against a local mock HTTP provider (`tests/support/mock-provider.ts`).
@@ -63,13 +64,15 @@ work without saying so. Skills are guidance text only and never grant tools.
 **Governance (`src/governance/`).** `policy.ts` decides from `config/users.yaml` + `config/policies.yaml`: roles grant
 run, approve and tool action classes; data classification is capped by the agent's ceiling; approving one's own
 request needs `allowSelfApproval`. Tools with `risk: sensitive` pause for a human on every call (no session-wide
-grants). `budget.ts` limits are checked before and after a run; tokens and cost cannot be stopped mid-session.
+grants). Budgets (`config/budgets.yaml`): `task` limits use a fresh `BudgetTracker` per attempt and withhold the
+output when reached; `run` limits use one tracker per run, seeded from the ledger so a resume does not reset it, and
+stop further tasks from starting (marked `blocked`). Tokens and cost cannot be stopped mid-session.
 `injection.ts` screens retrieved text and agent-to-agent results sentence by sentence; it is one layer of several (ADR 8).
 
 **Orchestrator (`src/orchestrator/`).** A planner agent proposes a task graph by calling `result.submit`;
 `graph.ts` validates it in code (approved agents, eligible skills, no cycles, reserved stage ids); a human approves;
 then `orchestrator.ts` runs ready tasks in parallel. After the planned tasks the platform itself appends stage tasks:
-`assurance` → optional `<id>-rework` + `assurance-2` → `report`. Each stage is a row in the run store, and the next
+`assurance` → optional `<id>-rework` (findings' tasks plus everything downstream of them) + `assurance-2` → `report`. Each stage is a row in the run store, and the next
 step is derived only from stored results, which is what makes `resume` after a process kill work. Results must
 match the agent's output contract (`contracts.ts`, zod) and may cite only evidence ids retrieved in this run; a
 failing result is sent back once. A fail verdict holds the run until an approver overrides with a reason.

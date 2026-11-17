@@ -1,0 +1,11 @@
+# Limits applied by the command line. Remove a line to lift that limit.
+# A cost limit (maxCostUsd) only works once prices are set in models.yaml; with a cost
+# limit and no price, the limit counts as reached.
+task:
+  # Wall-clock seconds for one task attempt before its session is cancelled.
+  maxSeconds: 900
+run:
+  # Across every task of one run, counted from the audit ledger. When reached, no further
+  # task starts; tasks already running finish.
+  maxModelCalls: 500
+  maxTokens: 5000000

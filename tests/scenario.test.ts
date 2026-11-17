@@ -70,7 +70,7 @@ describe('research ethics eforms scenario, end to end', () => {
     const summary = await t.orchestrator.execute(runId);
     assert.equal(summary.status, 'completed');
     assert.deepEqual(summary.tasks.map((x) => x.id),
-      ['evidence', 'architecture', 'security', 'data', 'costs', 'assurance', 'architecture-rework', 'assurance-2', 'report']);
+      ['evidence', 'architecture', 'security', 'data', 'costs', 'assurance', 'architecture-rework', 'costs-rework', 'assurance-2', 'report']);
     assert.ok(summary.tasks.every((x) => x.status === 'completed'));
 
     // What the agents read is what the documents say.
@@ -88,8 +88,14 @@ describe('research ethics eforms scenario, end to end', () => {
     assert.deepEqual(verdicts.map((v) => [v.task, v.verdict, v.major, v.independent]), [['assurance', 'conditional', 1, true], ['assurance-2', 'pass', 0, true]]);
     assert.equal(t.find('assurance.independence_reduced').length, 0);
 
-    // Only the task with a major finding was reworked, once; the reviewer was given its assigned skills.
-    assert.deepEqual((t.find('assurance.rework_requested')[0]!.data as { tasks: string[] }).tasks, ['architecture']);
+    // The task with a major finding was reworked, and the task built on it was redone after it, on the revised result.
+    assert.deepEqual(t.find('assurance.rework_requested')[0]!.data, { run: runId, tasks: ['architecture'], cascaded: ['costs'] });
+    const tasks = t.store.tasks(runId);
+    const task = (id: string) => tasks.find((x) => x.id === id)!;
+    assert.deepEqual(task('costs-rework').dependsOn, ['architecture-rework', 'costs', 'assurance']);
+    assert.deepEqual(task('assurance-2').dependsOn, ['evidence', 'architecture-rework', 'security', 'data', 'costs-rework', 'assurance']);
+    assert.deepEqual(task('report').dependsOn, ['evidence', 'architecture-rework', 'security', 'data', 'costs-rework', 'assurance-2']);
+    assert.ok(t.inputs.some((i) => i.includes('<your-task id="costs-rework">') && i.includes('<task-result task="architecture-rework"') && i.includes('has been revised after independent review')));
     const reviewer = t.find('agent.instantiated').find((r) => (r.data as { task: string }).task === 'assurance')!.data as { skills: { id: string }[] };
     assert.deepEqual(reviewer.skills.map((s) => s.id), ['evidence-verification', 'independent-solution-assurance', 'requirements-traceability']);
     assert.equal(t.find('skill.loaded').length, 1);
@@ -97,7 +103,7 @@ describe('research ethics eforms scenario, end to end', () => {
     const report = readFileSync(t.orchestrator.reportPath(runId)!, 'utf8');
     for (const expected of [
       '# Research Ethics eForms Modernisation: assessment', 'Assurance verdict: **pass**', 'Evidence: ev-1, ev-2',
-      '| ev-2 | hosting-costs.md | p9 |', 'One rework round was run for: architecture. First verdict was conditional.',
+      '| ev-2 | hosting-costs.md | p9 |', 'One rework round was run for: architecture, costs. First verdict was conditional.',
       'reviewed on provider OpenAI, different from every authoring provider', '| minor | costs |',
       '| architecture-rework | solution-architecture | platform | claude-author |', 'plan approved by user:local',
     ]) assert.ok(report.includes(expected), `report is missing: ${expected}`);
@@ -153,6 +159,39 @@ describe('research ethics eforms scenario, end to end', () => {
     assert.equal(summary.tasks.find((x) => x.id === 'data')!.model, 'deepseek-fallback');
     assert.ok(t.find('assurance.independence_reduced').length >= 1);
     assert.match(readFileSync(t.orchestrator.reportPath(runId)!, 'utf8'), /reviewed on provider DeepSeek, \*\*the same provider as at least one author; independence is reduced\*\*/);
+  });
+
+  it('stops starting tasks once the run budget is spent, and says which were not started', async () => {
+    const t = await platform({ runBudget: { maxModelCalls: 12 } });
+    const runId = await t.start();
+    const summary = await t.orchestrator.execute(runId);
+    assert.equal(summary.status, 'failed');
+    // Evidence (7 calls) fits; the three parallel analyses start together and finish; nothing after them starts.
+    assert.deepEqual(Object.fromEntries(summary.tasks.map((x) => [x.id, x.status])),
+      { evidence: 'completed', architecture: 'completed', security: 'completed', data: 'completed', costs: 'blocked' });
+    assert.match(summary.tasks.find((x) => x.id === 'costs')!.failure!, /run_budget_exceeded: model_calls/);
+    const exceeded = t.find('budget.run_exceeded')[0]!.data as { notStarted: string[]; modelCalls: number };
+    assert.deepEqual(exceeded.notStarted, ['costs']);
+    assert.ok(exceeded.modelCalls >= 12);
+    assert.equal(existsSync(t.orchestrator.reportPath(runId)!), false);
+
+    // A cost limit with no prices set cannot be measured, so it stops the run after the first task.
+    const unpriced = await platform({ runBudget: { maxCostUsd: 5 } });
+    const stopped = await unpriced.orchestrator.execute(await unpriced.start());
+    assert.equal((unpriced.find('budget.run_exceeded')[0]!.data as { limit: string }).limit, 'cost_unknown');
+    assert.deepEqual(stopped.tasks.filter((x) => x.status === 'completed').map((x) => x.id), ['evidence']);
+  });
+
+  it('counts usage already in the ledger when a run is resumed, so a restart does not reset the run budget', async () => {
+    const t = await platform({ runBudget: { maxModelCalls: 12 } });
+    const runId = await t.start();
+    await t.orchestrator.execute(runId);
+    // Put the blocked task back to pending, as if the process had died before the check, and resume.
+    t.store.setTaskStatus(runId, 'costs', 'pending');
+    t.store.setRunStatus(runId, 'running');
+    const resumed = await t.orchestrator.execute(runId);
+    assert.equal(resumed.tasks.find((x) => x.id === 'costs')!.status, 'blocked');
+    assert.equal(t.find('budget.run_exceeded').length, 2);
   });
 
   it('does not let a plan assign the reviewer or take the platform\'s stage ids', async () => {
