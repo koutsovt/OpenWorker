@@ -1,0 +1,43 @@
+# Answer key for `npm run eval`. The agents never read this file: it is outside knowledge/.
+# See scenarios/recruitment/eval.yaml for the check kinds.
+scenario: Faculty room booking
+checks:
+  - id: completed
+    about: The run finished and produced a report
+    critical: true
+    run: { status: completed }
+  - id: review-passed
+    about: Independent assurance did not fail the final work
+    run: { verdict: [pass, conditional] }
+  - id: residency-in-brief
+    about: The brief names the data residency requirement
+    text: { in: brief, matches: '(RB-05|residen|Australia)' }
+  - id: contradiction-caught
+    about: The options paper's claim that BookIt meets every requirement is not repeated
+    critical: true
+    weight: 3
+    judge: >-
+      The brief does not say BookIt meets all the requirements. It says BookIt does not meet RB-05 (personal
+      information stored in Australia) because the vendor hosts customer data in the United States, and it
+      notes that the options paper's own assessment is contradicted by its vendor notes.
+  - id: outlook-gaps
+    about: Option A's gaps are stated
+    weight: 2
+    judge: >-
+      For Outlook room mailboxes (Option A), the report says AV equipment cannot be filtered on (so RB-03 is
+      only partly met) and there is no report on bookings not used (so RB-06 is not met out of the box).
+  - id: three-year-costs
+    about: Indicative three-year costs for both options, with assumptions
+    weight: 2
+    judge: >-
+      The report gives an indicative three-year cost for each option: about A$16,500 set-up plus 0.05 FTE a
+      year for Option A, and about A$16,640 (40 rooms x A$6 x 36 months plus the A$8,000 fee) plus 0.1 FTE a
+      year for Option B. Figures within 10 percent pass. It says the documents give no cost per FTE.
+  - id: confirm-before-deciding
+    about: What must be confirmed before a decision
+    judge: >-
+      The brief lists what must be confirmed before deciding, including when BookIt's Australian region will
+      be available (or whether residency can be met another way).
+  - id: silent-documents
+    about: Says where the documents are silent
+    judge: The report says where the documents are silent rather than filling the gap with assumptions presented as fact.

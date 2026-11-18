@@ -39,15 +39,15 @@ const contracts = {
    * appendix the platform writes beside it. Fields beyond these are accepted but not shown.
    */
   report: z.looseObject({
-    title: text.max(150, 'title: at most 150 characters'),
-    answer: text.max(1200, 'answer: at most 1,200 characters (about 200 words)'),
+    title: text.max(100, 'title: at most 100 characters'),
+    answer: text.max(600, 'answer: at most 600 characters (three short sentences)'),
     findings: z.array(z.looseObject({
-      heading: text.max(100, 'heading: at most 100 characters'),
-      point: text.max(500, 'point: at most 500 characters (two or three sentences)'),
+      heading: text.max(80, 'heading: at most 80 characters'),
+      point: text.max(300, 'point: at most 300 characters (one or two sentences)'),
       evidence: evidenceIds,
-    })).min(1).max(6, 'findings: at most 6'),
-    recommendations: z.array(text.max(300, 'recommendation: at most 300 characters, one sentence')).min(1).max(7, 'recommendations: at most 7'),
-    decisionsNeeded: z.array(text.max(300, 'decision: at most 300 characters, one sentence')).max(7, 'decisionsNeeded: at most 7'),
+    })).min(1).max(4, 'findings: at most 4'),
+    recommendations: z.array(text.max(200, 'recommendation: at most 200 characters, one sentence')).min(1).max(4, 'recommendations: at most 4'),
+    decisionsNeeded: z.array(text.max(200, 'decision: at most 200 characters, one sentence')).max(4, 'decisionsNeeded: at most 4'),
   }),
   /**
    * Capability assessment: what a body of work needs, set against the approved agents and skills. The registry
@@ -73,10 +73,32 @@ const contracts = {
     })).min(1).max(40),
     classification: z.array(text).optional(),
   }),
+  /** Evaluation: one verdict per answer-key criterion the platform gave the evaluator. Which ids must appear is checked in code. */
+  evaluation: z.looseObject({
+    summary: text,
+    checks: z.array(z.looseObject({
+      id: text,
+      verdict: z.enum(['pass', 'fail', 'unclear']),
+      reason: text.max(600, 'reason: at most 600 characters'),
+    })).min(1).max(40),
+  }),
+  /** Improvement proposals: drafted changes to agents and skills, each tied to the run signals behind it. Targets and signal ids are checked in code. */
+  'improvement-proposals': z.looseObject({
+    summary: text,
+    proposals: z.array(z.looseObject({
+      target: z.looseObject({ kind: z.enum(['agent', 'skill']), id: text }),
+      problem: text,
+      signals: z.array(z.string().regex(/^S\d+$/, 'signal ids look like S3')).min(1, 'each proposal must cite the signals behind it'),
+      where: text,
+      change: text.max(2000, 'change: at most 2000 characters'),
+      expectedEffect: text,
+      priority: z.enum(['high', 'medium', 'low']),
+    })).max(8, 'proposals: at most 8'),
+  }),
 } as const;
 
 /** Contracts whose results are about the platform, not about an objective. Agents producing them are never given planned tasks. */
-export const PLATFORM_ONLY_CONTRACTS: ReadonlySet<string> = new Set(['capability-assessment']);
+export const PLATFORM_ONLY_CONTRACTS: ReadonlySet<string> = new Set(['capability-assessment', 'evaluation', 'improvement-proposals']);
 
 export type ContractName = keyof typeof contracts;
 export const CONTRACT_NAMES = Object.keys(contracts) as ContractName[];
@@ -104,6 +126,26 @@ export interface CapabilityAssessment {
   classification?: string[];
 }
 
+export interface EvaluationResult {
+  summary: string;
+  checks: { id: string; verdict: 'pass' | 'fail' | 'unclear'; reason: string }[];
+}
+
+export interface ImprovementProposal {
+  target: { kind: 'agent' | 'skill'; id: string };
+  problem: string;
+  signals: string[];
+  where: string;
+  change: string;
+  expectedEffect: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface ImprovementResult {
+  summary: string;
+  proposals: ImprovementProposal[];
+}
+
 export interface ReportResult {
   title: string;
   answer: string;
@@ -117,8 +159,10 @@ export const CONTRACT_SHAPES: Record<ContractName, string> = {
   'evidence-pack': '{"summary": string, "claims": [{"statement": string, "evidence": [evidence id, at least one]}], "gaps": [string]}',
   analysis: '{"summary": string, "claims": [{"statement": string, "evidence": [evidence ids; empty if you have none]}], "assumptions": [string], "openQuestions": [string]} — you may add further fields for your subject, such as options, threats, controls, entities or costs',
   assurance: '{"verdict": "pass" | "conditional" | "fail", "summary": string, "findings": [{"task": id of the task the finding is about, "severity": "critical" | "major" | "minor", "issue": string, "resolution": string}]}',
-  report: '{"title": string (at most 150 characters), "answer": string (the bottom line, at most 1,200 characters), "findings": [{"heading": string (at most 100), "point": string (at most 500), "evidence": [evidence ids]}] (1 to 6), "recommendations": [string, one sentence each, at most 300 characters] (1 to 7), "decisionsNeeded": [string, one sentence each, at most 300 characters] (at most 7)}',
+  report: '{"title": string (at most 100 characters), "answer": string (the bottom line, at most 600 characters), "findings": [{"heading": string (at most 80), "point": string (at most 300), "evidence": [evidence ids]}] (1 to 4), "recommendations": [string, one sentence each, at most 200 characters] (1 to 4), "decisionsNeeded": [string, one sentence each, at most 200 characters] (at most 4)}',
   'capability-assessment': '{"summary": string, "needs": [{"need": string, "evidence": [evidence ids, at least one], "coverage": "covered" | "partial" | "gap", "coveredBy": [{"agent": approved agent id, "skills": [ids from that agent\'s eligible skills]}], "priority": "high" | "medium" | "low", "recommendation": omit when covered; otherwise {"kind": "new-skill" | "extend-agent" | "new-agent", "id": new skill or agent id, or the existing skill to add, "agent": agent the skill is for or the agent to extend, "detail": string}}], "classification": [data classification concerns, as strings]}',
+  evaluation: '{"summary": string, "checks": [{"id": criterion id as given, "verdict": "pass" | "fail" | "unclear", "reason": string, at most 600 characters, quoting or pointing to the part of the report that decides it}]} — one entry for every criterion, none for anything else',
+  'improvement-proposals': '{"summary": string, "proposals": [{"target": {"kind": "agent" | "skill", "id": id of an agent or skill in the definitions given}, "problem": string, "signals": [signal ids such as "S3", at least one], "where": the instruction, method step, rule or quality criterion to change, "change": string, the exact text to add or the replacement text (at most 2000 characters), "expectedEffect": string, "priority": "high" | "medium" | "low"}] (at most 8; none if nothing recurs)}',
 };
 
 /** An assessment as the contract reads it: blank or "none" recommendations removed, missing lists defaulted. Call after `checkResult` passes. */

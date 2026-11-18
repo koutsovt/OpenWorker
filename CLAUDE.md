@@ -28,7 +28,7 @@ Some tests start the real OpenWorker engine against a local mock HTTP provider (
 In Claude Code's sandbox they are reported as *cancelled* ("Promise resolution is still pending"); run the suite
 outside the sandbox to get a real result. Tests run with `--test-concurrency=1`.
 
-CLI (`src/cli/main.ts`, via npm scripts `orchestrate`, `resume`, `assess`, `runs`, `usage`, `agent`, `ask`): real model
+CLI (`src/cli/main.ts`, via npm scripts `orchestrate`, `resume`, `assess`, `eval`, `improve`, `runs`, `usage`, `agent`, `ask`): real model
 calls need `node --env-file=<private env outside the repo>`. State goes to `.state/` (`WORKFORCE_STATE_DIR`);
 identities are `WORKFORCE_USER` (requester) and `WORKFORCE_APPROVER` (defaults to the requester), checked against
 `config/users.yaml`. The proof-of-concept scenario: `src/cli/main.ts orchestrate --scenario scenarios/research-ethics-eforms`.
@@ -86,6 +86,17 @@ orchestrated run (id `assess-<random>`) against a knowledge folder and the regis
 `capability-assessment` result passes the zod contract, then `checkAssessment` (registry checks: covering agents
 approved, skills eligible, new ids unused). Agents whose contract is in `PLATFORM_ONLY_CONTRACTS` are excluded
 from planning. The analyst only recommends; it writes nothing (`skills.propose` would need a write role).
+
+**Evaluation and improvement (`src/evaluation/`).** Every scenario folder has an answer key, `eval.yaml`, outside
+`knowledge/` so agents never read it (a test enforces both). `eval <scenario>` runs the scenario (or grades
+`--run <id>`): `run`, `ledger` and `text` checks are made in code, `judge` criteria by the `evaluator` agent
+(assurance policy, id `eval-<random>`, gets the screened brief and appendix, no knowledge tools). The scorecard
+(`.state/evals/<scenario>/`) records the agent and skill versions used and the lock digest; `--compare latest`
+diffs it with the previous one. A candidate version is compared by locking it on a branch, never by running
+unlocked definitions. `improve <run-id>` gathers the run's signals (findings, sent-back results, refused tools,
+limits, failed eval checks, uncovered needs), each tied to the agent and skill versions in use, and the
+`retrospective` agent drafts changes to `.state/proposals/`; `checkProposals` requires real targets and signal ids.
+Both agents are platform-only and write nothing.
 
 **State.** `src/audit/ledger.ts`: append-only, hash-chained SQLite ledger (plus a head row) for every decision;
 `ledger.verify()` checks it. `src/memory/state.ts`: evidence records and project memory, sharing one SQLite file

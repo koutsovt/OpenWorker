@@ -63,6 +63,18 @@ export class AuditLedger {
     return row ? { seq: row.seq, hash: row.hash } : { seq: 0, hash: GENESIS };
   }
 
+  private readonly listeners = new Set<(record: AuditRecord) => void>();
+
+  /**
+   * Calls `listener` with every record appended from now on, in this process, after it is committed.
+   * For live displays only: a listener's error is ignored and can never block or alter the record.
+   * Returns a function that stops the calls.
+   */
+  onAppend(listener: (record: AuditRecord) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   append(type: string, actor: string, data: Json): AuditRecord {
     const last = this.db.prepare('SELECT seq, hash FROM audit ORDER BY seq DESC LIMIT 1').get() as
       | { seq: number; hash: string } | undefined;
@@ -79,6 +91,9 @@ export class AuditLedger {
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
+    }
+    for (const listener of this.listeners) {
+      try { listener(record); } catch { /* a display must not affect the audit trail */ }
     }
     return record;
   }

@@ -539,9 +539,10 @@ const REASSURANCE_OBJECTIVE = [
   'Report only the findings that remain, each with the id of the task it is about, and give a final verdict: pass, conditional or fail.',
 ].join('\n');
 const REPORT_OBJECTIVE = [
-  'Write a short decision brief on the overall objective for a senior reader who will not read the task results. The platform attaches the full task results, the review and the evidence register as an appendix, so do not restate them: select what matters for the decision.',
-  'answer: the bottom line in a few plain sentences. findings: the 3 to 6 points that matter most for the decision, each a short heading and two or three sentences, with the evidence ids the task results cite for it. recommendations: what to do, one sentence each. decisionsNeeded: decisions or confirmations that people outside the work must give, one sentence each.',
-  'Add no new analysis and no claim that is not in a task result. Where results disagree, say so. Name any critical or major assurance finding that is still open. The platform rejects a brief over the stated lengths.',
+  'Write a one-page decision brief on the overall objective for a busy senior reader who has not seen the work and will not read the task results. The platform attaches the full task results, the reviews and the evidence register as an appendix, so leave detail there: choose only what changes the decision.',
+  'Write plainly. Short sentences, everyday words, one idea per sentence. Describe requirements and options by what they are, not by codes such as RB-03 or task ids. Give a figure only where it matters to the decision. No hedging, no repetition between sections, no caveats about the method.',
+  'answer: the bottom line in at most three short sentences: what to do and the main reason. findings: the 2 to 4 points that matter most, each a short heading and one or two sentences, with the evidence ids the task results cite for it. recommendations: what to do, one short sentence each. decisionsNeeded: who must decide or confirm what, one short sentence each, most important first.',
+  'Add no new analysis and no claim that is not in a task result. Where results disagree, say so in a finding. Name any critical or major assurance finding that is still open. The platform rejects a brief over the stated lengths.',
 ].join('\n');
 /** The report must not read as complete when the approved plan left parts of the objective to no one. */
 const reportObjective = (uncovered: UncoveredNeed[]): string => uncovered.length ? [

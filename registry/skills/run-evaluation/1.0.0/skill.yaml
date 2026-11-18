@@ -1,0 +1,21 @@
+id: run-evaluation
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Grade a finished run's brief and appendix against the reader-judged criteria of a benchmark scenario's answer key.
+scope: Benchmark scenarios with a written answer key. Not a review of the work for its requester; that is assurance.
+inputs:
+  - "The scenario objective"
+  - "The run's decision brief and appendix"
+  - "The answer-key criteria to judge, each with an id"
+outputs:
+  - "A pass, fail or unclear verdict for every criterion, with the reason"
+qualityCriteria:
+  - "Every criterion given is graded once, and nothing else is"
+  - "Each reason points to the text that decides it"
+  - "A criterion is passed only on what the text says, never on what it implies"
+evidenceRequirements:
+  - "Each reason quotes or locates the passage of the brief or appendix it rests on"
+dependencies: []
+applicableRoles: [evaluator]
+suggestedTools: []

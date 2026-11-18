@@ -105,9 +105,9 @@ describe('report contract: a decision brief', () => {
   });
 
   it('sends back a brief that is too long, saying which part', () => {
-    const long = { ...brief, answer: 'word '.repeat(400), findings: Array.from({ length: 9 }, () => brief.findings[0]!) };
+    const long = { ...brief, answer: 'word '.repeat(200), findings: Array.from({ length: 5 }, () => brief.findings[0]!) };
     const problems = checkResult('report', long, context).join('; ');
-    assert.match(problems, /answer: at most 1,200 characters/);
-    assert.match(problems, /findings: at most 6/);
+    assert.match(problems, /answer: at most 600 characters/);
+    assert.match(problems, /findings: at most 4/);
   });
 });

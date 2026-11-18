@@ -19,16 +19,16 @@ const statusOf = (summary: { tasks: { id: string; status: string }[] }, id: stri
 describe('registry content', () => {
   const registry = new Registry(resolve('registry'));
 
-  it('has the seven approved agents, each matching the lock', () => {
+  it('has the nine approved agents, each matching the lock', () => {
     assert.deepEqual(registry.usableAgents().map((a) => `${a.id}@${a.version}`),
-      ['assurance@2', 'capability-analyst@1', 'data@1', 'orchestrator@2', 'research@1', 'security@1', 'solution-architecture@1']);
+      ['assurance@2', 'capability-analyst@1', 'data@1', 'evaluator@1', 'orchestrator@2', 'research@1', 'retrospective@1', 'security@1', 'solution-architecture@1']);
     assert.deepEqual(registry.problems(), []);
   });
 
-  it('has the eight skills, each eligible for at least one agent, and resolves dependencies first', () => {
+  it('has the ten skills, each eligible for at least one agent, and resolves dependencies first', () => {
     const eligible = new Set(registry.usableAgents().flatMap((a) => registry.eligibleSkills(a).map((s) => s.id)));
     assert.deepEqual([...eligible].sort(), ['capability-gap-analysis', 'evidence-verification', 'hosting-architecture-review', 'independent-solution-assurance',
-      'integration-architecture', 'requirements-traceability', 'security-threat-modelling', 'solution-architecture-assessment']);
+      'integration-architecture', 'requirements-traceability', 'run-evaluation', 'run-retrospective', 'security-threat-modelling', 'solution-architecture-assessment']);
     assert.deepEqual(registry.resolveSkills(registry.agent('assurance'), ['independent-solution-assurance']).map((s) => s.id),
       ['evidence-verification', 'independent-solution-assurance']);
   });
@@ -100,20 +100,22 @@ describe('research ethics eforms scenario, end to end', () => {
     assert.deepEqual(reviewer.skills.map((s) => s.id), ['evidence-verification', 'independent-solution-assurance', 'requirements-traceability']);
     assert.equal(t.find('skill.loaded').length, 1);
 
-    // The brief: the report task's answer, findings and recommendations, then condensed traceability.
+    // The brief: the report task's answer, findings and recommendations, then a few plain lines on how it was checked.
     const report = readFileSync(t.orchestrator.reportPath(runId)!, 'utf8');
     for (const expected of [
-      '# Research Ethics eForms Modernisation: assessment', 'Assurance verdict: **pass**', `Full detail: \`${runId}-appendix.md\``,
-      '## Answer', '**Target architecture.** Residency is unmet on the managed host as described. _(ev-1, ev-2)_',
-      '## Decisions needed', '- hosting-costs.md: p9 (ev-2)', 'One rework round was run for: architecture, costs. First verdict was conditional.',
-      'reviewed on provider OpenAI, different from every authoring provider', 'Open findings: 0 critical, 0 major, 1 minor.', 'plan approved by user:local',
+      '# Research Ethics eForms Modernisation: assessment', 'Independent review: **pass**', `Full detail and sources: \`${runId}-appendix.md\``,
+      '## Answer', '**Target architecture.** Residency is unmet on the managed host as described.\n',
+      '## Decisions needed', '## How this was checked', '- 3 passages from 3 documents were read;',
+      'sent architecture and costs back for one rework round, then gave a final verdict of pass, with 0 critical, 0 major and 1 minor findings open.',
     ]) assert.ok(report.includes(expected), `brief is missing: ${expected}`);
-    // Minor findings and the full work log are in the appendix, not the brief.
-    assert.ok(!report.includes('| minor | costs |'));
+    // Evidence ids, minor findings, approvals and the work log are for the appendix, not the reader of the brief.
+    for (const absent of ['ev-', '| minor | costs |', 'plan approved by', 'tokens in']) assert.ok(!report.includes(absent), `brief should not have: ${absent}`);
     // The appendix: every planned task's final result, the full review, the evidence register and the work log.
     const appendix = readFileSync(t.orchestrator.appendixPath(runId)!, 'utf8');
     for (const expected of [
       '## Task results', '### evidence (research)', '### architecture (solution-architecture, revised after review)', '### costs (',
+      '## Sources for the brief', '**Target architecture**', '- hosting-costs.md: p9 (ev-2)', 'plan approved by user:local',
+      'reviewed on provider OpenAI, different from every authoring provider', '## Audit ledger',
       '## Independent assurance', '### Final review: pass', '### First review: conditional', '| minor | costs |',
       '## Evidence register', '| ev-2 | hosting-costs.md | p9 |', '| architecture-rework | solution-architecture | platform | claude-author |',
     ]) assert.ok(appendix.includes(expected), `appendix is missing: ${expected}`);
@@ -147,8 +149,8 @@ describe('research ethics eforms scenario, end to end', () => {
     const released = await later.orchestrator.execute(runId);
     assert.equal(released.status, 'completed');
     const report = readFileSync(later.orchestrator.reportPath(runId)!, 'utf8');
-    assert.match(report, /Assurance verdict: \*\*fail\*\* — overridden by local/);
-    assert.match(report, /Reason given: Accepted for discussion only\./);
+    assert.match(report, /Independent review: \*\*fail\*\*, overridden by local/);
+    assert.match(report, /The fail verdict was overridden by local: Accepted for discussion only\./);
     assert.match(report, /\| critical \| data-rework \|/);
     assert.equal(later.find('assurance.overridden')[0]!.actor, 'user:local');
   });
@@ -169,7 +171,8 @@ describe('research ethics eforms scenario, end to end', () => {
     assert.deepEqual(summary.tasks.find((x) => x.id === 'assurance')!.tried, ['openai-assurance', 'deepseek-fallback']);
     assert.equal(summary.tasks.find((x) => x.id === 'data')!.model, 'deepseek-fallback');
     assert.ok(t.find('assurance.independence_reduced').length >= 1);
-    assert.match(readFileSync(t.orchestrator.reportPath(runId)!, 'utf8'), /reviewed on provider DeepSeek, \*\*the same provider as at least one author; independence is reduced\*\*/);
+    assert.match(readFileSync(t.orchestrator.reportPath(runId)!, 'utf8'), /The reviewer ran on the same AI provider as the authors/);
+    assert.match(readFileSync(t.orchestrator.appendixPath(runId)!, 'utf8'), /reviewed on provider DeepSeek, \*\*the same provider as at least one author; independence is reduced\*\*/);
   });
 
   it('stops starting tasks once the run budget is spent, and says which were not started', async () => {
