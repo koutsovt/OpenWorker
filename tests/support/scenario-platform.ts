@@ -140,5 +140,5 @@ export async function platform(options: PlatformOptions = {}) {
     orchestrator.approvePlan(runId, 'local', 'approve');
     return runId;
   };
-  return { orchestrator, assessor, project, ledger, store, evidence, registry, find, start, stateDir, inputs, toolResults };
+  return { orchestrator, assessor, workforce, results, project, ledger, store, evidence, registry, find, start, stateDir, inputs, toolResults };
 }

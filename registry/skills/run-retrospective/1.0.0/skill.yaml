@@ -1,0 +1,20 @@
+id: run-retrospective
+version: 1.0.0
+status: approved
+owner: architecture-practice
+purpose: Trace a run's recorded problems to the agent instructions and skill methods behind them, and draft the smallest changes that would prevent them.
+scope: One finished, held or failed run, with its signals. Not a review of the work itself, and not a change to any definition.
+inputs:
+  - "The run's signals, each tied to the agent and skill versions in use"
+  - "The current text of those agents and skills"
+outputs:
+  - "Proposals, each naming the agent or skill, the text to change, the change, its expected effect and the signals behind it"
+qualityCriteria:
+  - "Each proposal is traced to the instruction or method step that caused or failed to prevent the problem"
+  - "Each change is specific enough to paste into a new version"
+  - "Problems caused by documents, providers or one-off steps are left out, not patched"
+evidenceRequirements:
+  - "Each proposal cites the signal ids behind it"
+dependencies: []
+applicableRoles: [retrospective]
+suggestedTools: []

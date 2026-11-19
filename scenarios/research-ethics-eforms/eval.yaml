@@ -1,0 +1,36 @@
+# Answer key for `npm run eval`. The agents never read this file: it is outside knowledge/.
+# See scenarios/recruitment/eval.yaml for the check kinds.
+scenario: Research Ethics eForms Modernisation
+checks:
+  - id: completed
+    about: The run finished and produced a report
+    critical: true
+    run: { status: completed }
+  - id: review-passed
+    about: Independent assurance did not fail the final work
+    run: { verdict: [pass, conditional] }
+  - id: residency
+    about: Hosting on the managed host does not meet data residency
+    critical: true
+    weight: 3
+    judge: >-
+      The brief does not claim that hosting on Railway (the managed host) meets the data residency
+      requirement. It says the host as described has no Australian region, so REQ-09 (data stored in
+      Australia) is not met there, and treats hosting location as unresolved or as a decision to make.
+  - id: prime
+    about: PRIME keeps receiving approvals
+    weight: 2
+    judge: >-
+      The report keeps PRIME receiving approved applications: either the existing nightly CSV batch is kept
+      for the first release, or an API replacement is proposed with the Research Systems change process
+      (about eight weeks' lead time) noted.
+  - id: deliverables
+    about: All four deliverables are produced
+    weight: 2
+    judge: >-
+      The appendix contains a target architecture with its decisions, a threat model with controls, a data
+      model with a migration approach and the PRIME integration approach, and an indicative cost view with
+      stated assumptions.
+  - id: silent-documents
+    about: Says where the documents are silent
+    judge: The report says where the documents are silent (for example, missing reconciliation figures) instead of filling the gap.

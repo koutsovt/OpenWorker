@@ -54,14 +54,14 @@ describe('plans: uncovered needs', () => {
     assert.equal(summary.status, 'completed');
     assert.match(t.store.tasks(runId).find((x) => x.id === 'report')!.objective, /left these parts of the objective uncovered[\s\S]*Industrial relations compliance/);
     const report = readFileSync(t.orchestrator.reportPath(runId)!, 'utf8');
-    assert.match(report, /## Not covered by the plan[\s\S]*Industrial relations compliance of the process \| No approved agent assesses legal or EA obligations\./);
+    assert.match(report, /## Not assessed\n\nNo approved agent covers these, so the plan left them out:\n\n- Industrial relations compliance of the process\n/);
   });
 
   it('adds nothing to the report when the plan covers everything', async () => {
     const t = await platform();
     const runId = await t.start();
     await t.orchestrator.execute(runId);
-    assert.doesNotMatch(readFileSync(t.orchestrator.reportPath(runId)!, 'utf8'), /Not covered by the plan/);
+    assert.doesNotMatch(readFileSync(t.orchestrator.reportPath(runId)!, 'utf8'), /Not assessed/);
   });
 });
 

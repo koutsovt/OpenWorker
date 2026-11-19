@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit",
     "orchestrate": "node --disable-warning=ExperimentalWarning src/cli/main.ts orchestrate",
     "assess": "node --disable-warning=ExperimentalWarning src/cli/main.ts assess",
+    "eval": "node --disable-warning=ExperimentalWarning src/cli/main.ts eval",
+    "improve": "node --disable-warning=ExperimentalWarning src/cli/main.ts improve",
     "resume": "node --disable-warning=ExperimentalWarning src/cli/main.ts resume",
     "usage": "node --disable-warning=ExperimentalWarning src/cli/main.ts usage",
     "runs": "node --disable-warning=ExperimentalWarning src/cli/main.ts runs",

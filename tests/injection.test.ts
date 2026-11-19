@@ -92,10 +92,13 @@ describe('planted text in documents', () => {
     // No canary that the screen caught reached any model input in the whole run.
     for (const n of ['01', '02', '03', '04', '05', '06', '07', '08']) assert.ok(!t.inputs.some((i) => i.includes(`CANARY-${n}`)), n);
 
+    // The brief says that sources were screened; the appendix lists them.
     const report = readFileSync(t.orchestrator.reportPath(runId)!, 'utf8');
-    assert.match(report, /## Suspected prompt injection/);
-    assert.match(report, /\| 05-verdict-steering\.md p2 \| verdict-steering \|/);
-    assert.doesNotMatch(report, /CANARY-0[1-8]/);
+    assert.match(report, /Text that read as an instruction to the AI was found in \d+ sources and removed/);
+    const appendix = readFileSync(t.orchestrator.appendixPath(runId)!, 'utf8');
+    assert.match(appendix, /## Suspected prompt injection/);
+    assert.match(appendix, /\| 05-verdict-steering\.md p2 \| verdict-steering \|/);
+    assert.doesNotMatch(`${report}${appendix}`, /CANARY-0[1-8]/);
   });
 });
 
@@ -146,7 +149,7 @@ describe('an agent that obeys planted text', () => {
     for (const input of downstream) assert.doesNotMatch(input, /RELAY-[12]/);
     assert.ok(downstream.some((i) => i.includes('Attachments total 210 GB.') && i.includes(REMOVED)));
     assert.deepEqual(t.find('injection.flagged').filter((r) => (r.data as { source: string }).source === 'task-result').map((r) => (r.data as { task: string }).task), ['evidence']);
-    assert.match(readFileSync(t.orchestrator.reportPath(runId)!, 'utf8'), /\| result of task evidence \| override, verdict-steering \|/);
+    assert.match(readFileSync(t.orchestrator.appendixPath(runId)!, 'utf8'), /\| result of task evidence \| override, verdict-steering \|/);
   });
 
   it('cannot plan its way around review, or approve anything itself', async () => {
