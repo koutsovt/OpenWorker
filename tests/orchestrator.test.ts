@@ -86,6 +86,20 @@ describe('planning and the plan gate', () => {
     assert.deepEqual(t.find('plan.denied').map((r) => r.actor), ['user:alice']);
   });
 
+  it('records the digest of the plan it decided on, matching the plan as accepted', async () => {
+    const t = await setup();
+    const digestOf = (type: string) => t.find(type).map((r) => (r.data as { planDigest: string }).planDigest);
+    const { runId } = t.orchestrator.submitPlan({ user: 'bob', objective: 'x', plan: { ...(plans.good as object), uncovered: [{ need: 'legal review', reason: 'no agent' }] } });
+    t.orchestrator.approvePlan(runId, 'alice', 'approve');
+    const { runId: other } = t.orchestrator.submitPlan({ user: 'bob', objective: 'y', plan: plans.good! });
+    t.orchestrator.approvePlan(other, 'alice', 'deny');
+    const [accepted, acceptedOther] = digestOf('plan.accepted');
+    assert.match(accepted!, /^[0-9a-f]{16}$/);
+    assert.notEqual(accepted, acceptedOther);
+    assert.deepEqual(digestOf('plan.approved'), [accepted]);
+    assert.deepEqual(digestOf('plan.denied'), [acceptedOther]);
+  });
+
   it('refuses a plan from a user who may not run agents', async () => {
     const t = await setup();
     assert.throws(() => t.orchestrator.submitPlan({ user: 'mallory', objective: 'x', plan: plans.good! }), coded('UNKNOWN_USER'));

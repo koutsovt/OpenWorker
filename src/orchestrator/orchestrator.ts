@@ -77,6 +77,11 @@ const RESULT_TOOL = 'result.submit';
 /** What the stages of one execution share: the approver, the per-task budget and the run's budget. */
 interface RunOptions { approver?: Approver; budget: Budget; tracker: BudgetTracker }
 const digest = (value: Json) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
+// Fixed field order, so the digest of a plan as accepted and as read back from the store match.
+const planDigest = (plan: Plan) => digest({
+  tasks: plan.tasks.map((t) => ({ id: t.id, agent: t.agent, objective: t.objective, skills: t.skills, dependsOn: t.dependsOn })),
+  uncovered: (plan.uncovered ?? []).map((u) => ({ need: u.need, reason: u.reason })),
+});
 const unfinished: TaskStatus[] = ['failed', 'blocked', 'needs_attention'];
 
 export class Orchestrator {
@@ -151,9 +156,11 @@ export class Orchestrator {
       ledger.append('plan.approval_rejected', `user:${approver}`, { run: runId, code: allowed.code, reason: allowed.reason });
       throw new GovernanceError(allowed.code, allowed.reason);
     }
+    // The decision names the plan it was made on, as stored now, so the ledger shows exactly what was approved.
+    const decidedOn = planDigest({ tasks: store.tasks(runId), uncovered: this.uncovered(runId) });
     const status: RunStatus = decision === 'approve' ? 'approved' : 'rejected';
     store.setRunStatus(runId, status);
-    ledger.append(decision === 'approve' ? 'plan.approved' : 'plan.denied', `user:${approver}`, { run: runId, selfApproval: approver === run.user });
+    ledger.append(decision === 'approve' ? 'plan.approved' : 'plan.denied', `user:${approver}`, { run: runId, planDigest: decidedOn, selfApproval: approver === run.user });
     return status;
   }
 
@@ -407,7 +414,7 @@ export class Orchestrator {
     project.put(runId, 'objective', 'objective', objective);
     if (plan.uncovered?.length) project.put(runId, 'decision', 'uncovered', plan.uncovered as unknown as Json);
     ledger.append('plan.accepted', `user:${user}`, {
-      run: runId, proposedBy, planDigest: digest(plan as unknown as Json),
+      run: runId, proposedBy, planDigest: planDigest(plan),
       tasks: plan.tasks.map((t) => ({ id: t.id, agent: t.agent, skills: t.skills, dependsOn: t.dependsOn })),
       uncovered: (plan.uncovered ?? []).map((u) => u.need),
     });
